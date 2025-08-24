@@ -175,5 +175,5 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
     "http://localhost:5173",
     "https://foxing-fit.vercel.app",
-    'foxingfit.pythonanywhere.com',
+    'https://foxingfit.pythonanywhere.com',
 ]
