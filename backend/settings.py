@@ -169,6 +169,11 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 50
 }
 
+CSRF_TRUSTED_ORIGINS = [
+    "https://foxing-fit.vercel.app",
+    "https://foxingfit.pythonanywhere.com",
+]
+
 # CORS settings (for future frontend)
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
