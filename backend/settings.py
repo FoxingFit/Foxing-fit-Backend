@@ -177,3 +177,34 @@ CORS_ALLOWED_ORIGINS = [
     "https://foxing-fit.vercel.app",
     'https://foxingfit.pythonanywhere.com',
 ]
+
+CSRF_COOKIE_SECURE = True
+CSRF_COOKIE_HTTPONLY = False
+CSRF_COOKIE_SAMESITE = 'None'
+
+# Session settings for admin login through proxy
+SESSION_COOKIE_SECURE = True
+SESSION_COOKIE_SAMESITE = 'None'
+
+# Trust the proxy headers
+USE_TZ = True
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_ALL_ORIGINS = False
+
+# Additional headers needed for admin
+CORS_ALLOWED_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+    'x-forwarded-for',
+    'x-forwarded-proto',
+    'referer',
+]
