@@ -106,7 +106,7 @@ class ScriptCategoryAdmin(admin.ModelAdmin):
 
 @admin.register(WorkoutScript)
 class WorkoutScriptAdmin(admin.ModelAdmin):
-    list_display = ['title', 'type', 'script_category', 'special_round_indicator', 'goal', 'duration_minutes', 'freshness_indicator', 'is_active']
+    list_display = ['title', 'type', 'script_category', 'special_round_indicator', 'goal', 'duration_display', 'freshness_indicator', 'is_active']
     list_filter = ['type', 'script_category__training_type', 'goal', 'is_active']
     search_fields = ['title', 'content']
     readonly_fields = ['times_selected', 'last_selected', 'created_at', 'updated_at']
@@ -130,6 +130,18 @@ class WorkoutScriptAdmin(admin.ModelAdmin):
             'description': 'Automatically tracked for variety.'
         }),
     )
+
+    def duration_display(self, obj):
+        """Show duration in MM:SS format"""
+        return obj.get_duration_display() 
+    duration_display.short_description = 'Duration'
+    
+    # Override form field help text
+    def get_form(self, request, obj=None, **kwargs):
+        form = super().get_form(request, obj, **kwargs)
+        if 'duration_minutes' in form.base_fields:
+            form.base_fields['duration_minutes'].help_text = "💡 Enter as 3:30 (3min 30sec) or 3.5 (decimal) - both work!"
+        return form
     
     def special_round_indicator(self, obj):
         """Show if this is a special round script"""

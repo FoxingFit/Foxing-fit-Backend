@@ -852,7 +852,9 @@ class IntelligentWorkoutGenerator(
         script_parts.append(f"{opening_text}\n")
         
         for i, script in enumerate(scripts):
-            if self.should_script_have_round_number(script):
+            # Check if this script should get a round number (use FoxingFitBranding logic)
+            if FoxingFitBranding.should_use_round_numbering(script.script_category.name):
+                # Regular script - gets "Ronde X: Script Title"
                 round_header = FoxingFitBranding.format_round_header(
                     round_counter, 
                     script.title, 
@@ -861,6 +863,7 @@ class IntelligentWorkoutGenerator(
                 script_parts.append(f"\n{round_header}\n\n")
                 round_counter += 1
             else:
+                # Special round - gets special header with script title
                 special_type = FoxingFitBranding.detect_special_round_type(script)
                 if special_type:
                     special_header = FoxingFitBranding.format_special_round_header(
@@ -869,7 +872,8 @@ class IntelligentWorkoutGenerator(
                     )
                     script_parts.append(f"\n{special_header}\n\n")
                 else:
-                    script_parts.append(f"\n## {script.script_category.display_name}\n\n")
+                    # Fallback for non-special scripts that somehow don't get round numbers
+                    script_parts.append(f"\n{script.title}\n\n")
             
             processed_content = quote_processor.process_script_content(script, training_type)
             script_parts.append(processed_content)
@@ -879,10 +883,6 @@ class IntelligentWorkoutGenerator(
         script_parts.append(f"\n{closing_text}")
         
         return ''.join(script_parts)
-    
-    def should_script_have_round_number(self, script):
-        """Determine if a script should get a round number in orange text"""
-        return FoxingFitBranding.should_use_round_numbering(script.script_category.name)
     
     def get_sport_additions_summary(self):
         """Create summary of sport-specific additions made during generation"""

@@ -77,34 +77,23 @@ class FoxingFitBranding:
     @classmethod
     def should_use_round_numbering(cls, script_category_name):
         """
-        Determine if a script category should use round numbering
-        
-        Args:
-            script_category_name: Name of the script category
-            
-        Returns:
-            Boolean indicating if round numbers should be used
+        ALL scripts get round numbers EXCEPT special rounds
         """
-        # Categories that should NOT get round numbers
+        # Only these special categories should NOT get round numbers
         no_round_categories = [
-            'warmup', 'warm-up', 'cooldown', 'cool-down',
-            'stretch', 'relax', 'savasana', 'mindfulness', 
-            'connecting', 'surprise', 'vinyasa', 'max'
+            'surprise', 'vinyasa', 'max'
         ]
         
         category_lower = script_category_name.lower()
+        
+        # If it contains any special keywords, no round number
         return not any(pattern in category_lower for pattern in no_round_categories)
     
+
     @classmethod
     def detect_special_round_type(cls, script):
         """
         Detect what type of special round a script is
-        
-        Args:
-            script: WorkoutScript instance
-            
-        Returns:
-            String indicating special round type or None for regular rounds
         """
         if script.is_surprise_round():
             return 'surprise'
