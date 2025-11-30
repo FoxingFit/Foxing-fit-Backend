@@ -1,29 +1,35 @@
 class FoxingFitBranding:
     """
     Handles standardized Foxing Fit opening/closing texts and round number formatting
+    
+    CLIENT CHANGES:
+    - Changed opening/closing texts to Dutch
+    - Removed emojis from special round headers
     """
     
+    # CLIENT REQUEST: Changed to Dutch
     OPENING_TEXTS = {
-        'kickboxing': "Get ready to start your Foxing Fit Heavybag Training.",
-        'power_yoga': "Get ready to start your Foxing Fit Power Yoga Lesson.",
-        'calisthenics': "Get ready to start your Foxing Fit Calisthenics workout."
+        'kickboxing': "Maak je klaar om te beginnen met je Foxing Fit Heavybag Training.",
+        'power_yoga': "Maak je klaar om te beginnen met je Foxing Fit Power Yoga Les.",
+        'calisthenics': "Maak je klaar om te beginnen met je Foxing Fit Calisthenics workout."
     }
     
+    # CLIENT REQUEST: Changed to Dutch
     CLOSING_TEXTS = {
-        'kickboxing': "Stay Sharp, Stay Foxing Fit.",
-        'power_yoga': "Stay Flexible, Stay Foxing Fit.",
-        'calisthenics': "Stay Strong, Stay Foxing Fit."
+        'kickboxing': "Blijf Scherp, Blijf Foxing Fit.",
+        'power_yoga': "Blijf Flexibel, Blijf Foxing Fit.",
+        'calisthenics': "Blijf Sterk, Blijf Foxing Fit."
     }
     
     @classmethod
     def get_opening_text(cls, training_type):
         """Get standardized opening text for sport"""
-        return cls.OPENING_TEXTS.get(training_type, "Get ready to start your Foxing Fit workout.")
+        return cls.OPENING_TEXTS.get(training_type, "Maak je klaar om te beginnen met je Foxing Fit workout.")
     
     @classmethod
     def get_closing_text(cls, training_type):
         """Get standardized closing text for sport"""
-        return cls.CLOSING_TEXTS.get(training_type, "Stay Fit, Stay Foxing Fit.")
+        return cls.CLOSING_TEXTS.get(training_type, "Blijf Fit, Blijf Foxing Fit.")
     
     @classmethod
     def format_round_header(cls, round_number, script_title, training_type='nl'):
@@ -51,23 +57,21 @@ class FoxingFitBranding:
     def format_special_round_header(cls, special_type, script_title=None):
         """
         Format special round headers (surprise, MAX challenge, vinyasa)
-        
         Args:
             special_type: Type of special round ('surprise', 'max_challenge', 'vinyasa')
             script_title: Optional script title to include
-        
         Returns:
-            Formatted special round header with appropriate styling and emoji
+            Formatted special round header without emojis
         """
         headers = {
-            'surprise': "🎯 SURPRISE RONDE",
-            'max_challenge': "💪 MAX CHALLENGE",
-            'vinyasa_s2s': "🌊 VINYASA OVERGANG (Staand naar Staand)",
-            'vinyasa_s2sit': "🌊 VINYASA OVERGANG (Staand naar Zittend)", 
-            'vinyasa': "🌊 VINYASA OVERGANG"
+            'surprise': "SURPRISE RONDE",
+            'max_challenge': "MAX CHALLENGE",
+            'vinyasa_s2s': "VINYASA OVERGANG (Staand naar Staand)",
+            'vinyasa_s2sit': "VINYASA OVERGANG (Staand naar Zittend)", 
+            'vinyasa': "VINYASA OVERGANG"
         }
         
-        header = headers.get(special_type, f"✨ {special_type.upper()}")
+        header = headers.get(special_type, f"{special_type.upper()}")
         
         if script_title:
             return f"{header}: {script_title}"
@@ -99,10 +103,8 @@ class FoxingFitBranding:
     def detect_special_round_type(cls, script):
         """
         Detect what type of special round a script is
-        
         Args:
             script: WorkoutScript instance
-            
         Returns:
             String indicating special round type or None for regular rounds
         """

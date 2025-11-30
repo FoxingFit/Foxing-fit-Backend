@@ -160,7 +160,8 @@ class WorkoutTemplateAdmin(admin.ModelAdmin):
         'sequence_order',
         'training_type', 
         'primary_category', 
-        'alternatives_preview', 
+        'alternatives_preview',
+        'multiple_selections_preview',
         'auto_additions_preview',
         'is_required',
         'active_status',
@@ -188,6 +189,14 @@ class WorkoutTemplateAdmin(admin.ModelAdmin):
                 'is_required'
             ),
             'description': 'Basic workout step configuration. Use sequence_order to control when things appear (1=first, 2=second, etc.).'
+        }),
+        ('🔄 Multiple Selections (Power Yoga, etc.)', {
+            'fields': ('allow_multiple_selections', 'min_selections', 'max_selections'),
+            'description': '<strong>Allow this category to be selected multiple times in sequence.</strong><br>'
+                          'Example: For Power Yoga Standing Poses, set min=1, max=5 to get 1-5 standing poses in a row.<br>'
+                          'The system will randomly choose between min and max for variety.<br>'
+                          '<strong>⚠️ Note:</strong> Only enable for categories where repetition makes sense (poses, exercises, flows).',
+            'classes': ('collapse',),
         }),
         ('🎯 Auto-Add Surprise Round After? (Kickboxing)', {
             'fields': ('add_surprise_round_after',),
@@ -224,6 +233,16 @@ class WorkoutTemplateAdmin(admin.ModelAdmin):
             preview += f" (+{obj.alternative_categories.count() - 2} more)"
         return preview or "None"
     alternatives_preview.short_description = 'OR Options'
+    
+    def multiple_selections_preview(self, obj):
+        """Show multiple selection configuration"""
+        if obj.allow_multiple_selections:
+            if obj.min_selections == obj.max_selections:
+                return format_html('<span style="color: #2196F3; font-weight: bold;">🔄 {0}x</span>', obj.min_selections)
+            else:
+                return format_html('<span style="color: #2196F3; font-weight: bold;">🔄 {0}-{1}x</span>', obj.min_selections, obj.max_selections)
+        return "1x"
+    multiple_selections_preview.short_description = 'Repetitions'
     
     def auto_additions_preview(self, obj):
         """Show what will be automatically added"""
@@ -302,7 +321,7 @@ class WorkoutTemplateAdmin(admin.ModelAdmin):
             messages.success(request, f"Template step {obj.sequence_order} configured successfully with optimal placement.")
     
     def _generate_detailed_warnings(self, obj):
-        """Generate detailed warnings about special round placement"""
+        """Generate detailed warnings about special round placement and multiple selections"""
         warnings = []
         
         if not obj.primary_category:
@@ -310,6 +329,28 @@ class WorkoutTemplateAdmin(admin.ModelAdmin):
             
         category_name = obj.primary_category.name.lower()
         category_display = obj.primary_category.display_name
+        
+        # Multiple selection warnings
+        if obj.allow_multiple_selections:
+            if obj.max_selections > 5:
+                warnings.append(f"⚠️ Multiple Selection Warning: Max {obj.max_selections} selections may create very long workouts. Consider reducing max_selections for better pacing.")
+            
+            # Warn about inappropriate categories for multiple selections
+            if any(term in category_name for term in ['warmup', 'warm-up', 'cooldown', 'cool-down', 'savasana', 'mindfulness', 'connecting']):
+                warnings.append(f"⚠️ Multiple Selection Warning: '{category_display}' is typically done once per workout. Multiple selections may not be appropriate for opening/closing sections.")
+            
+            # Check if there are enough scripts available
+            from .models import WorkoutScript
+            available_scripts = WorkoutScript.objects.filter(
+                type=obj.training_type,
+                script_category=obj.primary_category,
+                is_active=True
+            ).count()
+            
+            if available_scripts < obj.min_selections:
+                warnings.append(f"❌ Multiple Selection Error: Only {available_scripts} scripts available in '{category_display}', but min_selections is {obj.min_selections}. Add more scripts or reduce min_selections.")
+            elif available_scripts < obj.max_selections:
+                warnings.append(f"⚠️ Multiple Selection Warning: Only {available_scripts} scripts available in '{category_display}', but max_selections is {obj.max_selections}. System may not reach max selections.")
         
         # Surprise round warnings
         if obj.add_surprise_round_after:

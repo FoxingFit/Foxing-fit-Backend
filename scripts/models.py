@@ -367,17 +367,10 @@ class MotivationalQuote(models.Model):
         verbose_name_plural = "Motivational Quotes"
 
     def clean(self):
-        """Validation to ensure consistency"""
         from django.core.exceptions import ValidationError
         
-        if self.is_exercise_specific and not self.target_category:
-            raise ValidationError("Exercise-specific quotes must have a target category")
-        if not self.is_exercise_specific and self.target_category:
-            raise ValidationError("General quotes should not have a target category")
-        
-        # Ensure target_category matches training_type
-        if self.target_category and self.target_category.training_type != self.training_type:
-            raise ValidationError("Target category must match the quote's training type")
+        if not self.target_category:
+            self.is_exercise_specific = False
         
     def save(self, *args, **kwargs):
         """Auto-set is_exercise_specific based on target_category"""
@@ -455,6 +448,20 @@ class WorkoutTemplate(models.Model):
         help_text="Turn off to disable this template step without deleting it"
     )
     
+    # MULTIPLE SELECTION SUPPORT - For categories that can repeat (e.g., Power Yoga poses)
+    allow_multiple_selections = models.BooleanField(
+        default=False,
+        help_text="Allow selecting multiple scripts from this category in sequence"
+    )
+    min_selections = models.IntegerField(
+        default=1,
+        help_text="Minimum number of scripts to select (only used if allow_multiple_selections is True)"
+    )
+    max_selections = models.IntegerField(
+        default=1,
+        help_text="Maximum number of scripts to select (only used if allow_multiple_selections is True)"
+    )
+    
     # METHOD 1: Checkbox approach - system auto-selects categories
     add_surprise_round_after = models.BooleanField(
         default=False,
@@ -505,6 +512,33 @@ class WorkoutTemplate(models.Model):
         ordering = ['training_type', 'sequence_order']
         verbose_name = "Workout Template"
         verbose_name_plural = "Workout Templates"
+    
+    def clean(self):
+        """Validate multiple selection constraints"""
+        super().clean()
+        
+        # Validate min/max selections
+        if self.allow_multiple_selections:
+            if self.min_selections < 1:
+                raise ValidationError({
+                    'min_selections': 'Minimum selections must be at least 1'
+                })
+            
+            if self.max_selections < self.min_selections:
+                raise ValidationError({
+                    'max_selections': f'Maximum selections ({self.max_selections}) cannot be less than minimum selections ({self.min_selections})'
+                })
+            
+            if self.max_selections > 10:
+                raise ValidationError({
+                    'max_selections': 'Maximum selections cannot exceed 10 (to prevent excessive repetition)'
+                })
+        else:
+            # If not allowing multiple, enforce min=1 and max=1
+            if self.min_selections != 1 or self.max_selections != 1:
+                # Auto-correct instead of raising error
+                self.min_selections = 1
+                self.max_selections = 1
     
     def get_all_possible_categories(self):
         """Get primary category + all alternatives for OR logic"""
@@ -569,6 +603,14 @@ class WorkoutTemplate(models.Model):
         alternatives = list(self.alternative_categories.values_list('display_name', flat=True))
         alt_text = f" OR {', '.join(alternatives)}" if alternatives else ""
         
+        # Show multiple selection info
+        multiple_text = ""
+        if self.allow_multiple_selections:
+            if self.min_selections == self.max_selections:
+                multiple_text = f" [{self.min_selections}x]"
+            else:
+                multiple_text = f" [{self.min_selections}-{self.max_selections}x]"
+        
         special_additions = []
         if self.add_surprise_round_after:
             special_additions.append("+ Auto-Surprise")
@@ -582,4 +624,4 @@ class WorkoutTemplate(models.Model):
         
         active_status = "" if self.is_active else " [INACTIVE]"
         
-        return f"{self.get_training_type_display()} - Step {self.sequence_order}: {self.primary_category.display_name}{alt_text}{special_text}{active_status}"
+        return f"{self.get_training_type_display()} - Step {self.sequence_order}: {self.primary_category.display_name}{alt_text}{multiple_text}{special_text}{active_status}"
