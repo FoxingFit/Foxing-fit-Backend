@@ -251,6 +251,34 @@ class WorkoutScript(models.Model):
         ]
         verbose_name = "Workout Script"
         verbose_name_plural = "Workout Scripts"
+
+    def clean(self):
+        """Convert MM:SS input to decimal before saving"""
+        super().clean()
+        if self.duration_minutes is not None:
+            # If someone enters a string like "3:30", convert it
+            if isinstance(self.duration_minutes, str) and ':' in str(self.duration_minutes):
+                try:
+                    parts = str(self.duration_minutes).split(':')
+                    if len(parts) == 2:
+                        minutes = int(parts[0])
+                        seconds = int(parts[1])
+                        if seconds >= 60:
+                            seconds = 59  # Cap at 59 seconds
+                        self.duration_minutes = minutes + (seconds / 60.0)
+                except (ValueError, IndexError):
+                    pass  # Keep original value if conversion fails
+
+    def get_duration_display(self):
+        """Convert decimal minutes to MM:SS display format"""
+        if self.duration_minutes is None:
+            return "0:00"
+
+        total_seconds = int(self.duration_minutes * 60)
+        minutes = total_seconds // 60
+        seconds = total_seconds % 60
+
+        return f"{minutes}:{seconds:02d}"
     
     def clean_title(self):
         """Remove round numbers from title"""
