@@ -1,4 +1,3 @@
-# scripts/management/commands/import_scripts.py
 import os
 import re
 from pathlib import Path
@@ -14,7 +13,7 @@ except ImportError:
     DOCX_AVAILABLE = False
 
 class Command(BaseCommand):
-    help = 'Import Johnny\'s workout scripts from DATABASE_CONTENT folder with enhanced auto-detection for admin control system'
+    help = 'Import Johnny\'s workout scripts from DATABASE_CONTENT folder (3-goal system)'
     
     def add_arguments(self, parser):
         parser.add_argument('--folder-path', type=str, default='DATABASE_CONTENT',
@@ -42,12 +41,22 @@ class Command(BaseCommand):
         if dry_run:
             self.stdout.write(self.style.WARNING("🔍 DRY RUN MODE - No changes will be saved"))
         
-        # FIXED: Remove transaction.atomic wrapper that was causing MySQL issues
-        self._import_from_local_folder(
-            options['folder_path'], 
-            dry_run, 
-            options['update_existing']
-        )
+        try:
+            with transaction.atomic():
+                self._import_from_local_folder(
+                    options['folder_path'], 
+                    dry_run, 
+                    options['update_existing']
+                )
+                
+                if dry_run:
+                    raise Exception("Dry run - rolling back")
+                    
+        except Exception as e:
+            if "Dry run" in str(e):
+                self.stdout.write(self.style.SUCCESS("✅ Dry run completed successfully"))
+            else:
+                self.stdout.write(self.style.ERROR(f"❌ Error: {e}"))
     
     def _show_docx_installation_instructions(self):
         """Show installation instructions for python-docx"""
@@ -64,20 +73,20 @@ class Command(BaseCommand):
         self.stdout.write("python-docx==0.8.11")
     
     def _import_from_local_folder(self, folder_path, dry_run, update_existing):
-        """Import workout scripts from DATABASE_CONTENT folder with enhanced auto-detection"""
+        """Import workout scripts with improved folder mapping for 3-goal system"""
         
         if not os.path.exists(folder_path):
             self.stdout.write(self.style.ERROR(f"❌ Folder {folder_path} does not exist"))
             self._show_folder_structure_example(folder_path)
             return
         
-        # ENHANCED folder category mapping for admin control system
+        # IMPROVED folder category mapping for 3-goal system
         folder_category_mapping = {
-            # KICKBOXING MAPPINGS (supports admin-controlled surprise rounds)
+            # KICKBOXING MAPPINGS (improved warmup detection)
             'warmup': 'kb_warmup',
             'warm-up': 'kb_warmup',
-            'warm up': 'kb_warmup',
-            'warm - up': 'kb_warmup',  # Added for your folder structure
+            'warm up': 'kb_warmup',           # NEW: Handle "Warm up" folder
+            'warm - up': 'kb_warmup',         # NEW: Handle "Warm - up" folder (with spaces/dash)
             'combinations': 'kb_combinations',
             'combinations (empty)': 'kb_combinations',
             'combo': 'kb_combinations',
@@ -94,21 +103,21 @@ class Command(BaseCommand):
             'defence': 'kb_defence',
             'defence (empty)': 'kb_defence',
             'defense': 'kb_defence',
-            'suprise rounds': 'kb_surprise',    # Handle typo in Drive folder
-            'surprise rounds': 'kb_surprise',   # Correct spelling
+            'reaction time': 'kb_reaction_time',     # NEW: Added missing folder
+            'reaction': 'kb_reaction_time',
+            'surprise rounds': 'kb_surprise',        # System category
+            'suprise rounds': 'kb_surprise',         # Handle typo
             'surprise': 'kb_surprise',
             'cooldown': 'kb_cooldown',
             'cooldown (empty)': 'kb_cooldown',
             'cool-down': 'kb_cooldown',
             'cool down': 'kb_cooldown',
-            'endurance': 'kb_endurance',
-            'endurance (empty)': 'kb_endurance',
             'stretch and relax': 'kb_stretch_relax',
             'stretch': 'kb_stretch_relax',
             'relax': 'kb_stretch_relax',
             'stretching': 'kb_stretch_relax',
             
-            # POWER YOGA MAPPINGS (supports admin-controlled vinyasa)
+            # POWER YOGA MAPPINGS
             'connecting phase': 'py_connecting',
             'connecting': 'py_connecting',
             'sun greeting': 'py_sun_greeting',
@@ -125,9 +134,9 @@ class Command(BaseCommand):
             'lying poses': 'py_lying',
             'lying': 'py_lying',
             'savasana': 'py_savasana',
-            'mindfullness': 'py_mindfulness',
             'mindfulness': 'py_mindfulness',
-            # ADMIN-CONTROLLED VINYASA CATEGORIES
+            'mindfullness': 'py_mindfulness',        # Handle typo
+            # System vinyasa categories
             'vinyasa standing-to-standing': 'py_vinyasa_s2s',
             'vinyasa standing to standing': 'py_vinyasa_s2s',
             'vinyasa s2s': 'py_vinyasa_s2s',
@@ -135,15 +144,13 @@ class Command(BaseCommand):
             'vinyasa standing to sitting': 'py_vinyasa_s2sit',
             'vinyasa s2sit': 'py_vinyasa_s2sit',
             
-            # CALISTHENICS MAPPINGS (supports admin-controlled MAX challenge)
+            # CALISTHENICS MAPPINGS (improved warmup detection)
             'warmup': 'cal_warmup',
             'warm-up': 'cal_warmup',
-            'warm up': 'cal_warmup',
-            'warm - up': 'cal_warmup',  # Added for your folder structure
+            'warm up': 'cal_warmup',             # NEW: Handle "Warm up" folder
+            'warm - up': 'cal_warmup',           # NEW: Handle "Warm - up" folder
             'push-up variation': 'cal_pushup',
             'pushup variation': 'cal_pushup',
-            'push-up variations': 'cal_pushup',  # Added for your folder structure
-            'pushup variations': 'cal_pushup',
             'push-up': 'cal_pushup',
             'pushup': 'cal_pushup',
             'push up': 'cal_pushup',
@@ -187,7 +194,7 @@ class Command(BaseCommand):
             'static holds (empty)': 'cal_static_holds',
             'static': 'cal_static_holds',
             'holds': 'cal_static_holds',
-            # ADMIN-CONTROLLED MAX CHALLENGE CATEGORY
+            # System MAX challenge category
             'max challenge': 'cal_max_challenge',
             'max': 'cal_max_challenge',
             'challenge': 'cal_max_challenge',
@@ -226,7 +233,7 @@ class Command(BaseCommand):
                 if not os.path.isdir(category_path):
                     continue
                 
-                # Map folder name to category
+                # Map folder name to category (improved mapping)
                 category_name = self._map_folder_to_category(category_folder, folder_category_mapping, sport_type)
                 if not category_name:
                     self.stdout.write(f"   ⚠️ Skipping unknown/quotes category: {category_folder}")
@@ -272,15 +279,6 @@ class Command(BaseCommand):
                             total_updated += 1
                         elif result == 'skipped':
                             total_skipped += 1
-                            
-                        # Show individual file results
-                        if result == 'created':
-                            self.stdout.write(f"     ✅ Created: {file_name}")
-                        elif result == 'updated':
-                            self.stdout.write(f"     🔄 Updated: {file_name}")
-                        elif result == 'skipped':
-                            self.stdout.write(f"     ⏭️ Exists: {file_name}")
-                            
                     except Exception as e:
                         error_msg = f"Error importing {file_path}: {str(e)}"
                         errors.append(error_msg)
@@ -295,8 +293,8 @@ class Command(BaseCommand):
             if sport_file_count > 0:
                 self.stdout.write(f"📊 {sport_folder} total: {sport_file_count} files processed")
         
-        # Enhanced summary
-        self.stdout.write(f"\n🎯 IMPORT SUMMARY:")
+        # Enhanced summary for 3-goal system
+        self.stdout.write(f"\n🎯 IMPORT SUMMARY (3-Goal System):")
         self.stdout.write(self.style.SUCCESS(f"✅ New files imported: {total_imported}"))
         self.stdout.write(self.style.SUCCESS(f"🎯 Special rounds found: {special_rounds_found} (surprise, MAX challenge, vinyasa)"))
         if total_updated > 0:
@@ -305,33 +303,32 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING(f"⏭️ Files skipped (already exist): {total_skipped}"))
         if errors:
             self.stdout.write(self.style.WARNING(f"⚠️ Errors encountered: {len(errors)}"))
-            for error in errors[:5]:  # Show only first 5 errors to not overwhelm
+            for error in errors[:5]:
                 self.stdout.write(f"   {error}")
         
-        # Admin control reminder
+        # 3-goal system ready message
         if not dry_run and total_imported > 0:
-            self.stdout.write(f"\n🎯 ADMIN CONTROL READY:")
-            self.stdout.write("✅ Scripts imported with auto-detection for admin control system")
+            self.stdout.write(f"\n🎯 3-GOAL SYSTEM READY:")
+            self.stdout.write("✅ Scripts imported and categorized for allround, strength, flexibility goals")
             self.stdout.write("✅ Configure templates at: http://localhost:8000/admin/scripts/workouttemplate/")
-            self.stdout.write("✅ Use checkboxes to control where special rounds appear")
+            self.stdout.write("✅ Missing folders now handled: 'Warm up', 'Warm - up', 'Reaction time'")
     
     def _show_folder_structure_example(self, folder_path):
-        """Show example folder structure with admin control categories"""
+        """Show example folder structure with improved folder names"""
         self.stdout.write(f"💡 Create folder structure like:")
         self.stdout.write(f"   {folder_path}/")
         self.stdout.write(f"   ├── Kickboxing/")
+        self.stdout.write(f"   │   ├── Warm up/              # NOW SUPPORTED")
         self.stdout.write(f"   │   ├── Combinations/")
-        self.stdout.write(f"   │   │   ├── Fire breath (3_25).docx")
-        self.stdout.write(f"   │   │   └── Advanced Combinations (12_45).docx")
-        self.stdout.write(f"   │   ├── Suprise Rounds/  # Auto-detected as kb_surprise")
-        self.stdout.write(f"   │   │   └── Quick Burst (4_00).docx")
+        self.stdout.write(f"   │   ├── Reaction time/        # NOW SUPPORTED")
+        self.stdout.write(f"   │   └── Suprise Rounds/       # Auto-detected as kb_surprise")
         self.stdout.write(f"   ├── Power Yoga/")
         self.stdout.write(f"   │   ├── Standing Poses/")
-        self.stdout.write(f"   │   ├── Vinyasa Standing-to-Standing/  # Auto-detected as py_vinyasa_s2s")
-        self.stdout.write(f"   │   └── Vinyasa Standing-to-Sitting/   # Auto-detected as py_vinyasa_s2sit")
+        self.stdout.write(f"   │   └── Vinyasa Standing-to-Sitting/")
         self.stdout.write(f"   └── Calisthenics/")
+        self.stdout.write(f"       ├── Warm - up/            # NOW SUPPORTED")
         self.stdout.write(f"       ├── Push-up Variation/")
-        self.stdout.write(f"       └── MAX Challenge/  # Auto-detected as cal_max_challenge")
+        self.stdout.write(f"       └── MAX Challenge/")
     
     def _map_sport_folder_to_type(self, folder_name):
         """Map folder name to training type"""
@@ -345,12 +342,23 @@ class Command(BaseCommand):
         return None
     
     def _map_folder_to_category(self, folder_name, mapping, sport_type=None):
-        """Enhanced folder mapping with special round detection"""
+        """Enhanced folder mapping with better warmup detection"""
         folder_clean = folder_name.lower().strip()
         
         # Direct mapping first (exact match)
         if folder_clean in mapping:
             return mapping[folder_clean]
+        
+        # Enhanced warmup detection for problematic folder names
+        if self._is_warmup_folder(folder_clean):
+            if sport_type == 'kickboxing':
+                return 'kb_warmup'
+            elif sport_type == 'calisthenics':
+                return 'cal_warmup'
+        
+        # Enhanced reaction time detection
+        if self._is_reaction_time_folder(folder_clean):
+            return 'kb_reaction_time'
         
         # Handle variations and partial matches
         for key, value in mapping.items():
@@ -362,11 +370,24 @@ class Command(BaseCommand):
         # Smart fallback with enhanced special round detection
         return self._infer_category_from_folder_name(folder_clean, sport_type)
     
+    def _is_warmup_folder(self, folder_name):
+        """Enhanced warmup folder detection"""
+        warmup_patterns = [
+            'warmup', 'warm-up', 'warm up', 'warm - up',
+            'warmup (empty)', 'warm-up (empty)', 'warm up (empty)'
+        ]
+        return folder_name in warmup_patterns or any(pattern in folder_name for pattern in ['warm up', 'warm-up', 'warmup'])
+    
+    def _is_reaction_time_folder(self, folder_name):
+        """Detect reaction time folders"""
+        reaction_patterns = ['reaction time', 'reaction', 'reaction time (empty)']
+        return folder_name in reaction_patterns or 'reaction' in folder_name
+    
     def _infer_category_from_folder_name(self, folder_name, sport_type=None):
         """Enhanced category inference with special round detection"""
         folder_lower = folder_name.lower()
         
-        # SPECIAL ROUND DETECTION for admin control
+        # SPECIAL ROUND DETECTION
         if any(word in folder_lower for word in ['surprise', 'suprise']):
             return 'kb_surprise'
         elif 'max' in folder_lower and 'challenge' in folder_lower:
@@ -379,23 +400,25 @@ class Command(BaseCommand):
             else:
                 return 'py_vinyasa_s2s'  # Default vinyasa type
         
-        # Basic category patterns
-        if 'warmup' in folder_lower or 'warm-up' in folder_lower or 'warm up' in folder_lower or 'warm - up' in folder_lower:
+        # 🔧 FIXED: Enhanced warmup detection with proper sport mapping
+        if self._is_warmup_folder(folder_lower):
             if sport_type == 'kickboxing':
                 return 'kb_warmup'
             elif sport_type == 'calisthenics':
                 return 'cal_warmup'
+            elif sport_type == 'power_yoga':
+                return 'py_connecting'  # Power yoga uses connecting phase instead of warmup
+            else:
+                return None  # Unknown sport type
         
-        if 'push' in folder_lower:
-            return 'cal_pushup'
-        
-        if 'combination' in folder_lower or 'combo' in folder_lower:
-            return 'kb_combinations'
+        # Enhanced reaction time detection
+        if self._is_reaction_time_folder(folder_lower):
+            return 'kb_reaction_time'
         
         return None
     
     def _is_special_round_category(self, category_name):
-        """Check if category is a special round for admin control"""
+        """Check if category is a special round"""
         special_categories = ['kb_surprise', 'cal_max_challenge', 'py_vinyasa_s2s', 'py_vinyasa_s2sit']
         return category_name in special_categories
     
@@ -410,7 +433,7 @@ class Command(BaseCommand):
         return indicators.get(category_name, '')
     
     def _import_single_file(self, file_path, file_name, sport_type, category_name, dry_run, update_existing):
-        """Import a single workout script file with FIXED transaction handling"""
+        """Import a single workout script file for 3-goal system"""
         
         # Extract duration from filename
         duration = self._extract_duration_from_filename(file_name)
@@ -424,63 +447,59 @@ class Command(BaseCommand):
         if not content or len(content.strip()) < 10:
             content = self._create_placeholder_content(file_name, duration)
         
-        # Determine goal based on category and content
-        goal = self._determine_goal(category_name, title, content)
+        # Determine goal based on category and content (3-goal system)
+        goal = self._determine_goal_3_system(category_name, title, content)
         
         if not dry_run:
-            # FIXED: Use individual try-catch for each database operation
+            # Get script category
             try:
-                # Get script category
                 script_category = ScriptCategory.objects.get(
                     training_type=sport_type,
                     name=category_name
                 )
             except ScriptCategory.DoesNotExist:
-                raise Exception(f"Category '{category_name}' not found for {sport_type}. Please run: python manage.py setup --setup-complete-system")
+                raise Exception(f"Category '{category_name}' not found for {sport_type}. Please run: python manage.py setup")
             
-            try:
-                # Check if script already exists
-                existing_script = WorkoutScript.objects.filter(
+            # Check if script already exists
+            existing_script = WorkoutScript.objects.filter(
+                title=title,
+                type=sport_type,
+                script_category=script_category
+            ).first()
+            
+            if existing_script:
+                if update_existing:
+                    existing_script.content = content
+                    existing_script.duration_minutes = duration
+                    existing_script.goal = goal
+                    existing_script.notes = f'Updated from {file_path} for 3-goal system'
+                    existing_script.save()
+                    return 'updated'
+                else:
+                    return 'skipped'
+            else:
+                WorkoutScript.objects.create(
                     title=title,
                     type=sport_type,
-                    script_category=script_category
-                ).first()
-                
-                if existing_script:
-                    if update_existing:
-                        existing_script.content = content
-                        existing_script.duration_minutes = duration
-                        existing_script.goal = goal
-                        existing_script.notes = f'Updated from {file_path} for admin control system'
-                        existing_script.save()
-                        return 'updated'
-                    else:
-                        return 'skipped'
-                else:
-                    # Create new script
-                    WorkoutScript.objects.create(
-                        title=title,
-                        type=sport_type,
-                        script_category=script_category,
-                        content=content,
-                        duration_minutes=duration,
-                        goal=goal,
-                        language='nl',
-                        notes=f'Imported from {file_path} for admin control system'
-                    )
-                    return 'created'
-                    
-            except Exception as db_error:
-                raise Exception(f"Database error: {str(db_error)}")
-                
+                    script_category=script_category,
+                    content=content,
+                    duration_minutes=duration,
+                    goal=goal,
+                    language='nl',
+                    notes=f'Imported from {file_path} for 3-goal system'
+                )
+                return 'created'
         else:
             # Dry run output with special round indication
             special_indicator = self._get_special_round_indicator(category_name)
             content_preview = content[:50] + "..." if len(content) > 50 else content
-            return 'created'  # Assume would be created in dry run
+            self.stdout.write(
+                f"   [DRY RUN] CREATE: {title} ({duration:.2f}min, {goal}) {special_indicator}"
+            )
+            return 'created'
     
     def _read_file_content(self, file_path, file_name):
-        """Read content from DOCX or TXT file with improved error handling"""
+        """Read content from DOCX or TXT file"""
         try:
             if file_path.lower().endswith('.docx'):
                 return self._read_docx_content(file_path)
@@ -489,7 +508,6 @@ class Command(BaseCommand):
             else:
                 return ""
         except Exception as e:
-            # Don't fail the import, just create placeholder content
             self.stdout.write(self.style.WARNING(f"   ⚠️ Could not read {file_name}: {str(e)}"))
             return ""
     
@@ -508,8 +526,7 @@ class Command(BaseCommand):
             return self._clean_docx_content(content)
             
         except Exception as e:
-            # Don't raise exception, return empty content
-            return ""
+            raise Exception(f"Failed to read DOCX file: {str(e)}")
     
     def _read_txt_content(self, file_path):
         """Read content from TXT file"""
@@ -522,10 +539,10 @@ class Command(BaseCommand):
                 with open(file_path, 'r', encoding='latin-1') as f:
                     content = f.read().strip()
                 return content
-            except Exception:
-                return ""
-        except Exception:
-            return ""
+            except Exception as e:
+                raise Exception(f"Failed to read TXT file: {str(e)}")
+        except Exception as e:
+            raise Exception(f"Failed to read TXT file: {str(e)}")
     
     def _clean_docx_content(self, content):
         """Clean up content extracted from DOCX"""
@@ -556,8 +573,7 @@ Duration: {duration:.2f} minutes
 4. Replace this placeholder with the actual workout content
 5. Add [pause strong] and [pause weak] markers as needed
 
-This script was automatically imported for the admin control system.
-Configure placement via templates at: /admin/scripts/workouttemplate/
+This script was automatically imported for the 3-goal system.
 """
     
     def _extract_duration_from_filename(self, filename):
@@ -600,7 +616,7 @@ Configure placement via templates at: /admin/scripts/workouttemplate/
             return 5.0
         elif 'vinyasa' in clean_lower:
             return 3.5
-        elif any(word in clean_lower for word in ['warmup', 'warm-up']):
+        elif any(word in clean_lower for word in ['warmup', 'warm-up', 'warm up', 'warm - up']):
             return 8.0
         elif any(word in clean_lower for word in ['cooldown', 'stretch', 'relax']):
             return 6.0
@@ -630,8 +646,8 @@ Configure placement via templates at: /admin/scripts/workouttemplate/
         
         return title
     
-    def _determine_goal(self, category_name, title, content):
-        """Determine workout goal based on category and content"""
+    def _determine_goal_3_system(self, category_name, title, content):
+        """Determine workout goal based on category and content for 3-goal system"""
         
         # Special round categories
         if category_name in ['kb_surprise', 'cal_max_challenge']:
@@ -639,17 +655,22 @@ Configure placement via templates at: /admin/scripts/workouttemplate/
         elif 'vinyasa' in category_name:
             return 'flexibility'
         
-        # Category-based mapping
+        # Category-based mapping for 3-goal system
         strength_categories = [
             'cal_pullup', 'cal_pushup', 'cal_dips', 'cal_lsit', 'cal_handstand',
-            'cal_back_lever', 'cal_front_lever', 'cal_planche'
+            'cal_back_lever', 'cal_front_lever', 'cal_planche', 'cal_explosive',
+            'kb_combinations', 'kb_legs_kicks', 'kb_abs'
         ]
         
-        flexibility_categories = ['kb_stretch_relax', 'py_savasana', 'py_mindfulness', 'py_lying']
+        flexibility_categories = [
+            'kb_stretch_relax', 'py_savasana', 'py_mindfulness', 'py_lying',
+            'py_seated', 'cal_static_holds'
+        ]
         
         if category_name in strength_categories:
             return 'strength'
         elif category_name in flexibility_categories:
             return 'flexibility'
         
+        # Default to allround for warmup, cooldown, connecting, etc.
         return 'allround'

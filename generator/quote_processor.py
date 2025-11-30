@@ -41,7 +41,8 @@ class QuoteProcessor:
         for placeholder in placeholders:
             quote = self._select_contextual_quote(script, training_type)
             if quote:
-                formatted_quote = f"**{quote.get_formatted_quote()}**"
+                # CLIENT REQUEST: Remove ** asterisks from quote formatting
+                formatted_quote = quote.get_formatted_quote()
                 content = content.replace(placeholder, formatted_quote, 1)
                 quote.mark_used()
                 self.used_quote_ids.add(quote.id)
