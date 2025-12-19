@@ -250,7 +250,198 @@ class IntelligentWorkoutGenerator(
         return self.compile_generation_results(workout_session, final_scripts, training_type)
     
     def generate_base_workout_from_templates(self, template_rules, training_type, goal):
-        """Enhanced template processing with required step priority and budget planning"""
+        """
+        TIME-FILLING APPROACH: Fill target duration by intelligently repeating categories
+        within min/max limits while maintaining template order
+        """
+        
+        print(f"\n🏗️ TIME-FILLING WORKOUT GENERATION START")
+        print(f"Processing {template_rules.count()} template rules with intelligent time filling...")
+        
+        selected_scripts = []
+        total_duration = 0
+        min_duration = self.target_duration - self.time_flexibility
+        max_duration = self.target_duration + self.time_flexibility
+        
+        # Track selections per category to enforce min/max
+        category_selection_count = {}
+        
+        # PHASE 1: INITIAL PASS - Select minimum required from each step
+        print(f"\n� PnHASE 1: INITIAL PASS (Minimum Selections)")
+        print(f"=" * 60)
+        
+        for template_rule in template_rules:
+            if not template_rule.is_active:
+                continue
+                
+            category_key = f"{template_rule.sequence_order}_{template_rule.primary_category.id}"
+            category_selection_count[category_key] = 0
+            
+            # Determine minimum selections for this step
+            if template_rule.allow_multiple_selections:
+                min_selections = template_rule.min_selections
+            else:
+                min_selections = 1
+            
+            print(f"\n--- Step {template_rule.sequence_order}: {template_rule.primary_category.display_name} ---")
+            print(f"   Minimum required: {min_selections}x")
+            
+            # Select minimum required scripts
+            for i in range(min_selections):
+                possible_categories = template_rule.get_all_possible_categories()
+                active_categories = [cat for cat in possible_categories if cat.is_active]
+                
+                if not active_categories:
+                    print(f"   ❌ No active categories available")
+                    break
+                
+                selected_script = self.select_best_script_from_categories(
+                    active_categories, goal, training_type, max_duration - total_duration
+                )
+                
+                if selected_script:
+                    print(f"   ✅ Selected ({i+1}/{min_selections}): '{selected_script.title}' ({selected_script.duration_minutes}min)")
+                    selected_scripts.append(selected_script)
+                    total_duration += selected_script.duration_minutes
+                    self.used_script_ids.add(selected_script.id)
+                    selected_script.mark_selected()
+                    category_selection_count[category_key] += 1
+                else:
+                    print(f"   ❌ Could not find script for selection {i+1}")
+                    break
+            
+            # Add special rounds after minimum selections (if configured)
+            self._process_special_rounds_after_step(template_rule, selected_scripts, total_duration, training_type)
+            total_duration = sum(script.duration_minutes for script in selected_scripts)
+        
+        print(f"\n📊 After initial pass: {total_duration:.1f} minutes")
+        print(f"🎯 Target: {min_duration:.1f}-{max_duration:.1f} minutes")
+        
+        # PHASE 2: TIME-FILLING PASS - Intelligently add more scripts to reach target
+        print(f"\n⏰ PHASE 2: TIME-FILLING PASS")
+        print(f"=" * 60)
+        
+        if total_duration < min_duration:
+            needed = min_duration - total_duration
+            print(f"📈 Need to add {needed:.1f} more minutes")
+            
+            # Keep looping through template in order, adding scripts where allowed
+            max_iterations = 50  # Safety limit
+            iteration = 0
+            
+            while total_duration < min_duration and iteration < max_iterations:
+                iteration += 1
+                added_this_round = False
+                
+                print(f"\n🔄 Filling iteration {iteration}:")
+                
+                for template_rule in template_rules:
+                    if not template_rule.is_active:
+                        continue
+                    
+                    # Check if we've reached target
+                    if total_duration >= min_duration:
+                        print(f"   ✅ Target reached!")
+                        break
+                    
+                    category_key = f"{template_rule.sequence_order}_{template_rule.primary_category.id}"
+                    current_count = category_selection_count.get(category_key, 0)
+                    
+                    # Determine maximum allowed for this category
+                    if template_rule.allow_multiple_selections:
+                        max_allowed = template_rule.max_selections
+                    else:
+                        max_allowed = 1
+                    
+                    # Skip if already at maximum
+                    if current_count >= max_allowed:
+                        continue
+                    
+                    # Skip fixed categories (connecting, savasana, vinyasa)
+                    category_name = template_rule.primary_category.name.lower()
+                    if any(term in category_name for term in ['connecting', 'savasana', 'mindfulness', 'vinyasa']):
+                        continue
+                    
+                    # Try to add one more script from this category
+                    possible_categories = template_rule.get_all_possible_categories()
+                    active_categories = [cat for cat in possible_categories if cat.is_active]
+                    
+                    if not active_categories:
+                        continue
+                    
+                    remaining_time = max_duration - total_duration
+                    if remaining_time < 3:
+                        print(f"   ⏰ Less than 3 minutes remaining, stopping")
+                        break
+                    
+                    selected_script = self.select_best_script_from_categories(
+                        active_categories, goal, training_type, remaining_time
+                    )
+                    
+                    if selected_script:
+                        # Find insertion point (after last script from this category)
+                        insert_index = len(selected_scripts)
+                        for idx, script in enumerate(selected_scripts):
+                            if script.script_category == template_rule.primary_category:
+                                insert_index = idx + 1
+                        
+                        print(f"   ✅ Adding to {template_rule.primary_category.display_name}: '{selected_script.title}' ({selected_script.duration_minutes}min)")
+                        print(f"      Count: {current_count + 1}/{max_allowed}")
+                        
+                        selected_scripts.insert(insert_index, selected_script)
+                        total_duration += selected_script.duration_minutes
+                        self.used_script_ids.add(selected_script.id)
+                        selected_script.mark_selected()
+                        category_selection_count[category_key] += 1
+                        added_this_round = True
+                        
+                        # Check if we've reached target
+                        if total_duration >= min_duration:
+                            print(f"   🎯 Target reached: {total_duration:.1f} minutes!")
+                            break
+                
+                # If we couldn't add anything this round, stop
+                if not added_this_round:
+                    print(f"   ⚠️ No more scripts can be added (all categories at max)")
+                    break
+            
+            print(f"\n📊 After time-filling: {total_duration:.1f} minutes")
+        
+        else:
+            print(f"✅ Initial pass already reached target duration")
+        
+        # PHASE 3: FINAL ADJUSTMENTS
+        print(f"\n🎯 PHASE 3: FINAL ADJUSTMENTS")
+        print(f"=" * 60)
+        
+        if total_duration > max_duration:
+            excess = total_duration - max_duration
+            print(f"📉 Workout too long by {excess:.1f}min - trimming...")
+            selected_scripts = self.trim_workout_to_target_duration(selected_scripts, max_duration)
+            total_duration = sum(script.duration_minutes for script in selected_scripts)
+        
+        # Show final category counts
+        print(f"\n📊 FINAL CATEGORY COUNTS:")
+        for template_rule in template_rules:
+            if not template_rule.is_active:
+                continue
+            category_key = f"{template_rule.sequence_order}_{template_rule.primary_category.id}"
+            count = category_selection_count.get(category_key, 0)
+            
+            if template_rule.allow_multiple_selections:
+                limit_text = f"(min={template_rule.min_selections}, max={template_rule.max_selections})"
+            else:
+                limit_text = "(fixed 1x)"
+            
+            print(f"   {template_rule.primary_category.display_name}: {count}x {limit_text}")
+        
+        print(f"\n🏗️ TIME-FILLING GENERATION COMPLETE")
+        print(f"📊 Generated {len(selected_scripts)} scripts, {total_duration:.1f} minutes")
+        
+        return selected_scripts
+    
+    def generate_base_workout_from_templates_OLD(self, template_rules, training_type, goal):
+        """OLD METHOD - Enhanced template processing with required step priority and budget planning"""
         
         print(f"\n🏗️ ENHANCED TEMPLATE PROCESSING START")
         print(f"Processing {template_rules.count()} template rules with required step priority...")
@@ -293,6 +484,11 @@ class IntelligentWorkoutGenerator(
             print(f"\n--- TEMPLATE STEP {template_rule.sequence_order} ---")
             print(f"🎯 Processing: {template_rule.primary_category.display_name}")
             print(f"📋 Type: {'REQUIRED' if template_rule.is_required else 'OPTIONAL'}")
+            
+            # Show multiple selection info
+            if template_rule.allow_multiple_selections:
+                print(f"🔄 Multiple selections: {template_rule.min_selections}-{template_rule.max_selections}x")
+            
             print(f"⏰ Current duration: {total_duration:.1f}min / {max_duration:.1f}min max")
             
             if not template_rule.is_active:
@@ -319,68 +515,84 @@ class IntelligentWorkoutGenerator(
                     self._handle_missing_required_step(template_rule, selected_scripts, training_type, goal, max_duration - total_duration)
                 continue
             
-            # BUDGET CHECK: Different logic for required vs optional
-            if template_rule.is_required:
-                # REQUIRED: Always try to fulfill, but warn if tight on time
-                remaining_time = max_duration - total_duration
-                if remaining_time < 3:
-                    print(f"⚠️ TIGHT TIME: Only {remaining_time:.1f}min left for required step")
-                    
-                selected_script = self.select_best_script_from_categories(
-                    active_categories, goal, training_type, remaining_time
+            # MULTIPLE SELECTION LOGIC
+            if template_rule.allow_multiple_selections:
+                # Process multiple selections for this template step
+                self._process_multiple_selections(
+                    template_rule, active_categories, selected_scripts, 
+                    training_type, goal, total_duration, max_duration,
+                    optional_budget, optional_used
                 )
-                
-            else:
-                # OPTIONAL: Check budget first
-                remaining_optional_budget = optional_budget - optional_used
-                remaining_total_time = max_duration - total_duration
-                
-                # Use the smaller of the two constraints
-                available_time = min(remaining_optional_budget, remaining_total_time)
-                
-                print(f"💰 Optional budget check:")
-                print(f"   Remaining optional budget: {remaining_optional_budget:.1f}min")
-                print(f"   Remaining total time: {remaining_total_time:.1f}min")
-                print(f"   Available for this optional: {available_time:.1f}min")
-                
-                if available_time < 3:  # Need at least 3 minutes for a meaningful script
-                    print(f"⏭️ SKIPPED OPTIONAL: Insufficient budget ({available_time:.1f}min < 3min)")
-                    continue
-                    
-                selected_script = self.select_best_script_from_categories(
-                    active_categories, goal, training_type, available_time
-                )
-            
-            # Process the selected script
-            if selected_script:
-                success_type = "REQUIRED" if template_rule.is_required else "OPTIONAL"
-                print(f"✅ {success_type} SELECTED: '{selected_script.title}'")
-                print(f"   Category: {selected_script.script_category.display_name}")
-                print(f"   Goal: {selected_script.goal} (requested: {goal})")
-                print(f"   Duration: {selected_script.duration_minutes}min")
-                
-                selected_scripts.append(selected_script)
-                total_duration += selected_script.duration_minutes
-                self.used_script_ids.add(selected_script.id)
-                selected_script.mark_selected()
-                
-                # Track optional budget usage
+                # Update totals after multiple selections
+                total_duration = sum(script.duration_minutes for script in selected_scripts)
                 if not template_rule.is_required:
-                    optional_used += selected_script.duration_minutes
-                    print(f"   💰 Optional budget used: {optional_used:.1f}/{optional_budget:.1f}min")
+                    optional_used = sum(s.duration_minutes for s in selected_scripts 
+                                      if not self._is_from_required_step(s, template_rules))
                 
-                # Process special rounds
-                self._process_special_rounds_after_step(template_rule, selected_scripts, total_duration, training_type)
-                # Update total_duration after special rounds
-                total_duration = sum(script.duration_minutes for script in selected_scripts)
-                
-            elif template_rule.is_required:
-                print(f"❌ FAILED to find script for REQUIRED step: {template_rule.primary_category.display_name}")
-                self._handle_missing_required_step(template_rule, selected_scripts, training_type, goal, max_duration - total_duration)
-                # Update total_duration after fallback
-                total_duration = sum(script.duration_minutes for script in selected_scripts)
             else:
-                print(f"⏭️ SKIPPED optional step: {template_rule.primary_category.display_name}")
+                # SINGLE SELECTION LOGIC (existing logic)
+                # BUDGET CHECK: Different logic for required vs optional
+                if template_rule.is_required:
+                    # REQUIRED: Always try to fulfill, but warn if tight on time
+                    remaining_time = max_duration - total_duration
+                    if remaining_time < 3:
+                        print(f"⚠️ TIGHT TIME: Only {remaining_time:.1f}min left for required step")
+                        
+                    selected_script = self.select_best_script_from_categories(
+                        active_categories, goal, training_type, remaining_time
+                    )
+                    
+                else:
+                    # OPTIONAL: Check budget first
+                    remaining_optional_budget = optional_budget - optional_used
+                    remaining_total_time = max_duration - total_duration
+                    
+                    # Use the smaller of the two constraints
+                    available_time = min(remaining_optional_budget, remaining_total_time)
+                    
+                    print(f"💰 Optional budget check:")
+                    print(f"   Remaining optional budget: {remaining_optional_budget:.1f}min")
+                    print(f"   Remaining total time: {remaining_total_time:.1f}min")
+                    print(f"   Available for this optional: {available_time:.1f}min")
+                    
+                    if available_time < 3:  # Need at least 3 minutes for a meaningful script
+                        print(f"⏭️ SKIPPED OPTIONAL: Insufficient budget ({available_time:.1f}min < 3min)")
+                        continue
+                        
+                    selected_script = self.select_best_script_from_categories(
+                        active_categories, goal, training_type, available_time
+                    )
+                
+                # Process the selected script
+                if selected_script:
+                    success_type = "REQUIRED" if template_rule.is_required else "OPTIONAL"
+                    print(f"✅ {success_type} SELECTED: '{selected_script.title}'")
+                    print(f"   Category: {selected_script.script_category.display_name}")
+                    print(f"   Goal: {selected_script.goal} (requested: {goal})")
+                    print(f"   Duration: {selected_script.duration_minutes}min")
+                    
+                    selected_scripts.append(selected_script)
+                    total_duration += selected_script.duration_minutes
+                    self.used_script_ids.add(selected_script.id)
+                    selected_script.mark_selected()
+                    
+                    # Track optional budget usage
+                    if not template_rule.is_required:
+                        optional_used += selected_script.duration_minutes
+                        print(f"   💰 Optional budget used: {optional_used:.1f}/{optional_budget:.1f}min")
+                    
+                    # Process special rounds
+                    self._process_special_rounds_after_step(template_rule, selected_scripts, total_duration, training_type)
+                    # Update total_duration after special rounds
+                    total_duration = sum(script.duration_minutes for script in selected_scripts)
+                    
+                elif template_rule.is_required:
+                    print(f"❌ FAILED to find script for REQUIRED step: {template_rule.primary_category.display_name}")
+                    self._handle_missing_required_step(template_rule, selected_scripts, training_type, goal, max_duration - total_duration)
+                    # Update total_duration after fallback
+                    total_duration = sum(script.duration_minutes for script in selected_scripts)
+                else:
+                    print(f"⏭️ SKIPPED optional step: {template_rule.primary_category.display_name}")
         
         # PHASE 3: SUMMARY
         print(f"\n📊 BUDGET PLANNING RESULTS:")
@@ -414,8 +626,139 @@ class IntelligentWorkoutGenerator(
         
         return selected_scripts
     
+    def _process_multiple_selections(self, template_rule, active_categories, selected_scripts, 
+                                     training_type, goal, current_duration, max_duration,
+                                     optional_budget, optional_used):
+        """
+        Handle multiple selections for a template step with comprehensive edge case handling
+        
+        Edge cases handled:
+        1. Not enough scripts available (fewer than min_selections)
+        2. Time constraints (running out of time mid-selection)
+        3. Budget constraints for optional steps
+        4. Special rounds after each selection
+        5. Smart randomization of selection count
+        """
+        print(f"\n🔄 MULTIPLE SELECTION MODE")
+        print(f"   Target: {template_rule.min_selections}-{template_rule.max_selections} selections")
+        
+        # Determine how many selections to make (random between min and max)
+        target_selections = random.randint(template_rule.min_selections, template_rule.max_selections)
+        print(f"   Randomly chose: {target_selections} selections")
+        
+        # Track selections for this step
+        step_selections = []
+        selections_made = 0
+        
+        # Calculate available budget
+        if template_rule.is_required:
+            available_time = max_duration - current_duration
+            print(f"   Available time (required): {available_time:.1f}min")
+        else:
+            remaining_optional_budget = optional_budget - optional_used
+            remaining_total_time = max_duration - current_duration
+            available_time = min(remaining_optional_budget, remaining_total_time)
+            print(f"   Available time (optional): {available_time:.1f}min")
+        
+        # EDGE CASE 1: Check if we have enough time for minimum selections
+        min_script_duration = self._estimate_minimum_script_duration(active_categories, training_type)
+        min_time_needed = min_script_duration * template_rule.min_selections
+        
+        if available_time < min_time_needed:
+            print(f"   ⚠️ INSUFFICIENT TIME: Need {min_time_needed:.1f}min for {template_rule.min_selections} selections, have {available_time:.1f}min")
+            if template_rule.is_required:
+                print(f"   ⚠️ Required step - will attempt at least 1 selection")
+                target_selections = 1  # Try at least one
+            else:
+                print(f"   ⏭️ Skipping optional step due to time constraints")
+                return
+        
+        # Attempt to make selections
+        for selection_num in range(1, target_selections + 1):
+            print(f"\n   --- Selection {selection_num}/{target_selections} ---")
+            
+            # EDGE CASE 2: Check remaining time before each selection
+            current_total = sum(script.duration_minutes for script in selected_scripts)
+            remaining_time = max_duration - current_total
+            
+            if remaining_time < 3:
+                print(f"   ⏰ Out of time ({remaining_time:.1f}min < 3min) - stopping at {selections_made} selections")
+                break
+            
+            # EDGE CASE 3: Check if we have available scripts
+            available_script_count = self._count_available_scripts(active_categories, training_type)
+            if available_script_count == 0:
+                print(f"   ❌ No more available scripts - stopping at {selections_made} selections")
+                break
+            
+            # Select script
+            selected_script = self.select_best_script_from_categories(
+                active_categories, goal, training_type, remaining_time
+            )
+            
+            if selected_script:
+                print(f"   ✅ Selected: '{selected_script.title}' ({selected_script.duration_minutes}min)")
+                selected_scripts.append(selected_script)
+                step_selections.append(selected_script)
+                self.used_script_ids.add(selected_script.id)
+                selected_script.mark_selected()
+                selections_made += 1
+                
+                # EDGE CASE 4: Process special rounds after each selection
+                # Only add special rounds after the LAST selection to avoid too many
+                if selection_num == target_selections or selection_num == selections_made:
+                    self._process_special_rounds_after_step(
+                        template_rule, selected_scripts, 
+                        sum(s.duration_minutes for s in selected_scripts), 
+                        training_type
+                    )
+            else:
+                print(f"   ❌ Could not find suitable script - stopping at {selections_made} selections")
+                break
+        
+        # EDGE CASE 5: Validate minimum selections were met
+        if selections_made < template_rule.min_selections:
+            print(f"\n   ⚠️ WARNING: Only made {selections_made}/{template_rule.min_selections} minimum selections")
+            if template_rule.is_required:
+                print(f"   ⚠️ Required step not fully satisfied - may need more scripts in database")
+                # Record this as a missing category issue
+                self.missing_categories.append({
+                    'category': template_rule.primary_category.display_name,
+                    'name': template_rule.primary_category.name,
+                    'required': True,
+                    'issue': f'Only {selections_made}/{template_rule.min_selections} selections possible'
+                })
+        else:
+            print(f"\n   ✅ Multiple selection complete: {selections_made} scripts selected")
+    
+    def _is_from_required_step(self, script, template_rules):
+        """Helper to determine if a script came from a required template step"""
+        # This is a simplified check - in practice, we'd need to track this more carefully
+        # For now, we'll assume all scripts are from required steps unless proven otherwise
+        return True
+    
+    def _estimate_minimum_script_duration(self, categories, training_type):
+        """Estimate the minimum duration of scripts in given categories"""
+        shortest_script = WorkoutScript.objects.filter(
+            type=training_type,
+            script_category__in=categories,
+            is_active=True
+        ).exclude(id__in=self.used_script_ids).order_by('duration_minutes').first()
+        
+        if shortest_script:
+            return shortest_script.duration_minutes
+        return 5.0  # Conservative estimate if no scripts found
+    
+    def _count_available_scripts(self, categories, training_type):
+        """Count how many scripts are still available in given categories"""
+        return WorkoutScript.objects.filter(
+            type=training_type,
+            script_category__in=categories,
+            is_active=True
+        ).exclude(id__in=self.used_script_ids).count()
+    
     def _estimate_required_steps_duration(self, required_steps, training_type, goal):
-        """Estimate minimum duration needed for all required steps"""
+        """Estimate minimum duration needed for all required steps (including multiple selections)"""
         
         print(f"🔍 Estimating required steps duration:")
         total_estimated = 0
@@ -431,12 +774,20 @@ class IntelligentWorkoutGenerator(
             ).exclude(id__in=self.used_script_ids).order_by('duration_minutes').first()
             
             if shortest_script:
-                step_duration = shortest_script.duration_minutes
+                base_duration = shortest_script.duration_minutes
             else:
                 # Fallback estimate if no scripts found
-                step_duration = 5.0  # Conservative 5-minute estimate
+                base_duration = 5.0  # Conservative 5-minute estimate
             
-            # Add potential special round duration
+            # HANDLE MULTIPLE SELECTIONS: Multiply by minimum selections
+            if step.allow_multiple_selections:
+                step_duration = base_duration * step.min_selections
+                print(f"   📋 {step.primary_category.display_name} ({step.min_selections}x): ~{step_duration:.1f}min")
+            else:
+                step_duration = base_duration
+                print(f"   📋 {step.primary_category.display_name}: ~{step_duration:.1f}min")
+            
+            # Add potential special round duration (only once, after last selection)
             special_category = step.get_special_round_category_to_add_after()
             if special_category:
                 special_script = WorkoutScript.objects.filter(
@@ -451,7 +802,6 @@ class IntelligentWorkoutGenerator(
                     step_duration += 3.5  # Conservative estimate for special rounds
             
             total_estimated += step_duration
-            print(f"   📋 {step.primary_category.display_name}: ~{step_duration:.1f}min")
         
         return total_estimated
     

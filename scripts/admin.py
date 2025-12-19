@@ -106,10 +106,10 @@ class ScriptCategoryAdmin(admin.ModelAdmin):
 
 @admin.register(WorkoutScript)
 class WorkoutScriptAdmin(admin.ModelAdmin):
-    list_display = ['title', 'type', 'script_category', 'special_round_indicator', 'goal', 'duration_minutes', 'freshness_indicator', 'is_active']
-    list_filter = ['type', 'script_category__training_type', 'goal', 'is_active']
+    list_display = ['title', 'type', 'script_category', 'special_round_indicator', 'goal', 'duration_minutes', 'audio_availability_indicator', 'freshness_indicator', 'is_active']
+    list_filter = ['type', 'script_category__training_type', 'goal', 'is_active', 'audio_nl', 'audio_en']
     search_fields = ['title', 'content']
-    readonly_fields = ['times_selected', 'last_selected', 'created_at', 'updated_at']
+    readonly_fields = ['times_selected', 'last_selected', 'created_at', 'updated_at', 'audio_duration_nl', 'audio_duration_en']
     
     fieldsets = (
         ('Basic Information', {
@@ -119,6 +119,11 @@ class WorkoutScriptAdmin(admin.ModelAdmin):
         ('Content & Timing', {
             'fields': ('content', 'duration_minutes'),
             'description': 'The actual script text and speaking duration.'
+        }),
+        ('Audio Files (Multi-Language)', {
+            'fields': ('audio_nl', 'audio_duration_nl', 'audio_en', 'audio_duration_en'),
+            'description': 'Upload audio recordings for this script. Duration will be extracted automatically.',
+            'classes': ('collapse',),
         }),
         ('Management', {
             'fields': ('is_active', 'notes'),
@@ -130,6 +135,61 @@ class WorkoutScriptAdmin(admin.ModelAdmin):
             'description': 'Automatically tracked for variety.'
         }),
     )
+    
+    def audio_availability_indicator(self, obj):
+        """Show audio availability status"""
+        has_nl = obj.has_audio('nl')
+        has_en = obj.has_audio('en')
+        
+        if has_nl and has_en:
+            return format_html('<span style="color: #4CAF50; font-weight: bold;">🎵 NL + EN</span>')
+        elif has_nl:
+            return format_html('<span style="color: #2196F3;">🎵 NL only</span>')
+        elif has_en:
+            return format_html('<span style="color: #2196F3;">🎵 EN only</span>')
+        else:
+            return format_html('<span style="color: #9E9E9E;">⚪ No audio</span>')
+    audio_availability_indicator.short_description = 'Audio'
+    
+    def save_model(self, request, obj, form, change):
+        """Extract audio duration on save and validate"""
+        from generator.audio_validator import AudioValidator
+        from django.contrib import messages
+        
+        validator = AudioValidator()
+        
+        # Check if audio files were uploaded
+        if 'audio_nl' in form.changed_data and obj.audio_nl:
+            duration, error = validator.extract_duration(obj.audio_nl)
+            if duration:
+                obj.audio_duration_nl = duration
+                # Validate duration match
+                is_valid, percentage_diff, error_msg = validator.validate_duration_match(
+                    duration, obj.duration_minutes
+                )
+                if not is_valid:
+                    messages.warning(request, f"Dutch audio: {error_msg}")
+                else:
+                    messages.success(request, f"Dutch audio validated: {duration:.1f} min (within tolerance)")
+            elif error:
+                messages.error(request, f"Dutch audio error: {error}")
+        
+        if 'audio_en' in form.changed_data and obj.audio_en:
+            duration, error = validator.extract_duration(obj.audio_en)
+            if duration:
+                obj.audio_duration_en = duration
+                # Validate duration match
+                is_valid, percentage_diff, error_msg = validator.validate_duration_match(
+                    duration, obj.duration_minutes
+                )
+                if not is_valid:
+                    messages.warning(request, f"English audio: {error_msg}")
+                else:
+                    messages.success(request, f"English audio validated: {duration:.1f} min (within tolerance)")
+            elif error:
+                messages.error(request, f"English audio error: {error}")
+        
+        super().save_model(request, obj, form, change)
     
     def special_round_indicator(self, obj):
         """Show if this is a special round script"""
@@ -160,7 +220,8 @@ class WorkoutTemplateAdmin(admin.ModelAdmin):
         'sequence_order',
         'training_type', 
         'primary_category', 
-        'alternatives_preview', 
+        'alternatives_preview',
+        'multiple_selections_preview',
         'auto_additions_preview',
         'is_required',
         'active_status',
@@ -188,6 +249,14 @@ class WorkoutTemplateAdmin(admin.ModelAdmin):
                 'is_required'
             ),
             'description': 'Basic workout step configuration. Use sequence_order to control when things appear (1=first, 2=second, etc.).'
+        }),
+        ('🔄 Multiple Selections (Power Yoga, etc.)', {
+            'fields': ('allow_multiple_selections', 'min_selections', 'max_selections'),
+            'description': '<strong>Allow this category to be selected multiple times in sequence.</strong><br>'
+                          'Example: For Power Yoga Standing Poses, set min=1, max=5 to get 1-5 standing poses in a row.<br>'
+                          'The system will randomly choose between min and max for variety.<br>'
+                          '<strong>⚠️ Note:</strong> Only enable for categories where repetition makes sense (poses, exercises, flows).',
+            'classes': ('collapse',),
         }),
         ('🎯 Auto-Add Surprise Round After? (Kickboxing)', {
             'fields': ('add_surprise_round_after',),
@@ -224,6 +293,16 @@ class WorkoutTemplateAdmin(admin.ModelAdmin):
             preview += f" (+{obj.alternative_categories.count() - 2} more)"
         return preview or "None"
     alternatives_preview.short_description = 'OR Options'
+    
+    def multiple_selections_preview(self, obj):
+        """Show multiple selection configuration"""
+        if obj.allow_multiple_selections:
+            if obj.min_selections == obj.max_selections:
+                return format_html('<span style="color: #2196F3; font-weight: bold;">🔄 {0}x</span>', obj.min_selections)
+            else:
+                return format_html('<span style="color: #2196F3; font-weight: bold;">🔄 {0}-{1}x</span>', obj.min_selections, obj.max_selections)
+        return "1x"
+    multiple_selections_preview.short_description = 'Repetitions'
     
     def auto_additions_preview(self, obj):
         """Show what will be automatically added"""
@@ -302,7 +381,7 @@ class WorkoutTemplateAdmin(admin.ModelAdmin):
             messages.success(request, f"Template step {obj.sequence_order} configured successfully with optimal placement.")
     
     def _generate_detailed_warnings(self, obj):
-        """Generate detailed warnings about special round placement"""
+        """Generate detailed warnings about special round placement and multiple selections"""
         warnings = []
         
         if not obj.primary_category:
@@ -310,6 +389,28 @@ class WorkoutTemplateAdmin(admin.ModelAdmin):
             
         category_name = obj.primary_category.name.lower()
         category_display = obj.primary_category.display_name
+        
+        # Multiple selection warnings
+        if obj.allow_multiple_selections:
+            if obj.max_selections > 5:
+                warnings.append(f"⚠️ Multiple Selection Warning: Max {obj.max_selections} selections may create very long workouts. Consider reducing max_selections for better pacing.")
+            
+            # Warn about inappropriate categories for multiple selections
+            if any(term in category_name for term in ['warmup', 'warm-up', 'cooldown', 'cool-down', 'savasana', 'mindfulness', 'connecting']):
+                warnings.append(f"⚠️ Multiple Selection Warning: '{category_display}' is typically done once per workout. Multiple selections may not be appropriate for opening/closing sections.")
+            
+            # Check if there are enough scripts available
+            from .models import WorkoutScript
+            available_scripts = WorkoutScript.objects.filter(
+                type=obj.training_type,
+                script_category=obj.primary_category,
+                is_active=True
+            ).count()
+            
+            if available_scripts < obj.min_selections:
+                warnings.append(f"❌ Multiple Selection Error: Only {available_scripts} scripts available in '{category_display}', but min_selections is {obj.min_selections}. Add more scripts or reduce min_selections.")
+            elif available_scripts < obj.max_selections:
+                warnings.append(f"⚠️ Multiple Selection Warning: Only {available_scripts} scripts available in '{category_display}', but max_selections is {obj.max_selections}. System may not reach max selections.")
         
         # Surprise round warnings
         if obj.add_surprise_round_after:

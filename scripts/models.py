@@ -231,6 +231,30 @@ class WorkoutScript(models.Model):
         help_text="When this was last used - system tracks automatically"
     )
     
+    # Audio fields for multi-language audio workout generation
+    audio_nl = models.FileField(
+        upload_to='workout_audio/nl/',
+        null=True,
+        blank=True,
+        help_text="Dutch audio recording for this script"
+    )
+    audio_en = models.FileField(
+        upload_to='workout_audio/en/',
+        null=True,
+        blank=True,
+        help_text="English audio recording for this script"
+    )
+    audio_duration_nl = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Duration of Dutch audio in minutes"
+    )
+    audio_duration_en = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Duration of English audio in minutes"
+    )
+    
     # Management
     is_active = models.BooleanField(
         default=True,
@@ -251,6 +275,34 @@ class WorkoutScript(models.Model):
         ]
         verbose_name = "Workout Script"
         verbose_name_plural = "Workout Scripts"
+
+    def clean(self):
+        """Convert MM:SS input to decimal before saving"""
+        super().clean()
+        if self.duration_minutes is not None:
+            # If someone enters a string like "3:30", convert it
+            if isinstance(self.duration_minutes, str) and ':' in str(self.duration_minutes):
+                try:
+                    parts = str(self.duration_minutes).split(':')
+                    if len(parts) == 2:
+                        minutes = int(parts[0])
+                        seconds = int(parts[1])
+                        if seconds >= 60:
+                            seconds = 59  # Cap at 59 seconds
+                        self.duration_minutes = minutes + (seconds / 60.0)
+                except (ValueError, IndexError):
+                    pass  # Keep original value if conversion fails
+
+    def get_duration_display(self):
+        """Convert decimal minutes to MM:SS display format"""
+        if self.duration_minutes is None:
+            return "0:00"
+
+        total_seconds = int(self.duration_minutes * 60)
+        minutes = total_seconds // 60
+        seconds = total_seconds % 60
+
+        return f"{minutes}:{seconds:02d}"
     
     def clean_title(self):
         """Remove round numbers from title"""
@@ -296,6 +348,39 @@ class WorkoutScript(models.Model):
     
     def is_vinyasa_transition(self):
         return self.script_category.is_vinyasa_transition()
+    
+    # Audio-related methods
+    def has_audio(self, language='nl'):
+        """Check if audio exists for given language"""
+        if language == 'nl':
+            return bool(self.audio_nl)
+        elif language == 'en':
+            return bool(self.audio_en)
+        return False
+    
+    def get_audio_file(self, language='nl'):
+        """Get audio file for given language"""
+        if language == 'nl':
+            return self.audio_nl
+        elif language == 'en':
+            return self.audio_en
+        return None
+    
+    def validate_audio_duration(self, language='nl'):
+        """
+        Validate audio duration is within 20% of text duration
+        Returns (is_valid, difference_percentage)
+        """
+        audio_duration = self.audio_duration_nl if language == 'nl' else self.audio_duration_en
+        
+        if not audio_duration or not self.duration_minutes:
+            return (False, None)
+        
+        difference = abs(audio_duration - self.duration_minutes)
+        percentage_diff = (difference / self.duration_minutes) * 100
+        
+        is_valid = percentage_diff <= 20.0
+        return (is_valid, percentage_diff)
     
     def __str__(self):
         return f"{self.get_type_display()} - {self.title}"
@@ -367,17 +452,10 @@ class MotivationalQuote(models.Model):
         verbose_name_plural = "Motivational Quotes"
 
     def clean(self):
-        """Validation to ensure consistency"""
         from django.core.exceptions import ValidationError
         
-        if self.is_exercise_specific and not self.target_category:
-            raise ValidationError("Exercise-specific quotes must have a target category")
-        if not self.is_exercise_specific and self.target_category:
-            raise ValidationError("General quotes should not have a target category")
-        
-        # Ensure target_category matches training_type
-        if self.target_category and self.target_category.training_type != self.training_type:
-            raise ValidationError("Target category must match the quote's training type")
+        if not self.target_category:
+            self.is_exercise_specific = False
         
     def save(self, *args, **kwargs):
         """Auto-set is_exercise_specific based on target_category"""
@@ -455,6 +533,20 @@ class WorkoutTemplate(models.Model):
         help_text="Turn off to disable this template step without deleting it"
     )
     
+    # MULTIPLE SELECTION SUPPORT - For categories that can repeat (e.g., Power Yoga poses)
+    allow_multiple_selections = models.BooleanField(
+        default=False,
+        help_text="Allow selecting multiple scripts from this category in sequence"
+    )
+    min_selections = models.IntegerField(
+        default=1,
+        help_text="Minimum number of scripts to select (only used if allow_multiple_selections is True)"
+    )
+    max_selections = models.IntegerField(
+        default=1,
+        help_text="Maximum number of scripts to select (only used if allow_multiple_selections is True)"
+    )
+    
     # METHOD 1: Checkbox approach - system auto-selects categories
     add_surprise_round_after = models.BooleanField(
         default=False,
@@ -505,6 +597,33 @@ class WorkoutTemplate(models.Model):
         ordering = ['training_type', 'sequence_order']
         verbose_name = "Workout Template"
         verbose_name_plural = "Workout Templates"
+    
+    def clean(self):
+        """Validate multiple selection constraints"""
+        super().clean()
+        
+        # Validate min/max selections
+        if self.allow_multiple_selections:
+            if self.min_selections < 1:
+                raise ValidationError({
+                    'min_selections': 'Minimum selections must be at least 1'
+                })
+            
+            if self.max_selections < self.min_selections:
+                raise ValidationError({
+                    'max_selections': f'Maximum selections ({self.max_selections}) cannot be less than minimum selections ({self.min_selections})'
+                })
+            
+            if self.max_selections > 10:
+                raise ValidationError({
+                    'max_selections': 'Maximum selections cannot exceed 10 (to prevent excessive repetition)'
+                })
+        else:
+            # If not allowing multiple, enforce min=1 and max=1
+            if self.min_selections != 1 or self.max_selections != 1:
+                # Auto-correct instead of raising error
+                self.min_selections = 1
+                self.max_selections = 1
     
     def get_all_possible_categories(self):
         """Get primary category + all alternatives for OR logic"""
@@ -569,6 +688,14 @@ class WorkoutTemplate(models.Model):
         alternatives = list(self.alternative_categories.values_list('display_name', flat=True))
         alt_text = f" OR {', '.join(alternatives)}" if alternatives else ""
         
+        # Show multiple selection info
+        multiple_text = ""
+        if self.allow_multiple_selections:
+            if self.min_selections == self.max_selections:
+                multiple_text = f" [{self.min_selections}x]"
+            else:
+                multiple_text = f" [{self.min_selections}-{self.max_selections}x]"
+        
         special_additions = []
         if self.add_surprise_round_after:
             special_additions.append("+ Auto-Surprise")
@@ -582,4 +709,4 @@ class WorkoutTemplate(models.Model):
         
         active_status = "" if self.is_active else " [INACTIVE]"
         
-        return f"{self.get_training_type_display()} - Step {self.sequence_order}: {self.primary_category.display_name}{alt_text}{special_text}{active_status}"
+        return f"{self.get_training_type_display()} - Step {self.sequence_order}: {self.primary_category.display_name}{alt_text}{multiple_text}{special_text}{active_status}"

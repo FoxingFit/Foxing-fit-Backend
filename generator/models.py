@@ -145,3 +145,131 @@ class SessionScript(models.Model):
         ordering = ['sequence_order']
         verbose_name = "Session Script"
         verbose_name_plural = "Session Scripts"
+
+
+class AudioPlaylist(models.Model):
+    """
+    Audio playlist for a workout session
+    
+    Developer Notes:
+    - Represents a complete audio workout in a specific language
+    - Tracks completeness and duration including pauses
+    - Links to individual audio segments in sequence
+    """
+    
+    LANGUAGES = [
+        ('nl', 'Dutch'),
+        ('en', 'English'),
+    ]
+    
+    workout_session = models.ForeignKey(
+        WorkoutSession,
+        on_delete=models.CASCADE,
+        related_name='audio_playlists',
+        help_text="Which workout session this audio playlist belongs to"
+    )
+    language = models.CharField(
+        max_length=2,
+        choices=LANGUAGES,
+        help_text="Language of this audio playlist"
+    )
+    total_duration = models.FloatField(
+        help_text="Total duration including pauses in minutes"
+    )
+    segment_count = models.IntegerField(
+        help_text="Total number of segments in playlist"
+    )
+    available_segment_count = models.IntegerField(
+        help_text="Number of segments with available audio"
+    )
+    merged_audio_file = models.FileField(
+        upload_to='merged_audio/',
+        null=True,
+        blank=True,
+        help_text="Merged audio file (all segments combined)"
+    )
+    merged_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the audio was last merged"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        unique_together = ['workout_session', 'language']
+        ordering = ['-created_at']
+        verbose_name = "Audio Playlist"
+        verbose_name_plural = "Audio Playlists"
+    
+    def get_completeness_percentage(self):
+        """Calculate percentage of segments with audio"""
+        if self.segment_count == 0:
+            return 0.0
+        return (self.available_segment_count / self.segment_count) * 100
+    
+    def is_complete(self):
+        """Check if all segments have audio"""
+        return self.segment_count == self.available_segment_count
+    
+    def __str__(self):
+        completeness = self.get_completeness_percentage()
+        return "{} - {} ({:.0f}% complete)".format(
+            str(self.workout_session), 
+            self.get_language_display(), 
+            completeness
+        )
+
+
+class AudioSegment(models.Model):
+    """
+    Individual audio segment within a playlist
+    
+    Developer Notes:
+    - Links to SessionScript to maintain workout structure
+    - Tracks audio availability and duration
+    - Includes pause duration after segment
+    """
+    
+    audio_playlist = models.ForeignKey(
+        AudioPlaylist,
+        on_delete=models.CASCADE,
+        related_name='segments',
+        help_text="Which audio playlist this segment belongs to"
+    )
+    session_script = models.ForeignKey(
+        SessionScript,
+        on_delete=models.CASCADE,
+        help_text="The workout script this audio represents"
+    )
+    sequence_order = models.IntegerField(
+        help_text="Order in the playlist (matches SessionScript order)"
+    )
+    audio_file = models.FileField(
+        upload_to='merged_audio/',
+        null=True,
+        blank=True,
+        help_text="Reference to the audio file"
+    )
+    duration = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Duration of this audio segment in minutes"
+    )
+    is_available = models.BooleanField(
+        default=False,
+        help_text="Whether audio is available for this segment"
+    )
+    pause_after = models.FloatField(
+        default=2.0,
+        help_text="Pause duration after this segment in seconds"
+    )
+    
+    class Meta:
+        ordering = ['sequence_order']
+        unique_together = ['audio_playlist', 'sequence_order']
+        verbose_name = "Audio Segment"
+        verbose_name_plural = "Audio Segments"
+    
+    def __str__(self):
+        status = "Available" if self.is_available else "Missing"
+        return f"Segment {self.sequence_order}: {self.session_script.workout_script.title} ({status})"
