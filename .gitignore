@@ -1,2 +1,30 @@
+# Python
+*.pyc
+__pycache__/
+*~
+*.log
+.coverage
+htmlcov/
+
+# Environment
 .env
-env
+.venv
+env/
+venv/
+ENV/
+
+# Database
+db.sqlite3
+*.sqlite3
+
+# Media and Static files (adjust as needed for your deployment strategy)
+/media/
+/static_collected/
+
+# IDE-specific files (optional, can be added to a global gitignore)
+.idea/
+.vscode/
+
+# Operating System files
+.DS_Store
+Thumbs.db

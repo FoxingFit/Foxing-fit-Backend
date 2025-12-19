@@ -231,6 +231,30 @@ class WorkoutScript(models.Model):
         help_text="When this was last used - system tracks automatically"
     )
     
+    # Audio fields for multi-language audio workout generation
+    audio_nl = models.FileField(
+        upload_to='workout_audio/nl/',
+        null=True,
+        blank=True,
+        help_text="Dutch audio recording for this script"
+    )
+    audio_en = models.FileField(
+        upload_to='workout_audio/en/',
+        null=True,
+        blank=True,
+        help_text="English audio recording for this script"
+    )
+    audio_duration_nl = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Duration of Dutch audio in minutes"
+    )
+    audio_duration_en = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Duration of English audio in minutes"
+    )
+    
     # Management
     is_active = models.BooleanField(
         default=True,
@@ -324,6 +348,39 @@ class WorkoutScript(models.Model):
     
     def is_vinyasa_transition(self):
         return self.script_category.is_vinyasa_transition()
+    
+    # Audio-related methods
+    def has_audio(self, language='nl'):
+        """Check if audio exists for given language"""
+        if language == 'nl':
+            return bool(self.audio_nl)
+        elif language == 'en':
+            return bool(self.audio_en)
+        return False
+    
+    def get_audio_file(self, language='nl'):
+        """Get audio file for given language"""
+        if language == 'nl':
+            return self.audio_nl
+        elif language == 'en':
+            return self.audio_en
+        return None
+    
+    def validate_audio_duration(self, language='nl'):
+        """
+        Validate audio duration is within 20% of text duration
+        Returns (is_valid, difference_percentage)
+        """
+        audio_duration = self.audio_duration_nl if language == 'nl' else self.audio_duration_en
+        
+        if not audio_duration or not self.duration_minutes:
+            return (False, None)
+        
+        difference = abs(audio_duration - self.duration_minutes)
+        percentage_diff = (difference / self.duration_minutes) * 100
+        
+        is_valid = percentage_diff <= 20.0
+        return (is_valid, percentage_diff)
     
     def __str__(self):
         return f"{self.get_type_display()} - {self.title}"

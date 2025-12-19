@@ -14,6 +14,10 @@ class WorkoutScriptSerializer(serializers.ModelSerializer):
     goal_display = serializers.CharField(source='get_goal_display', read_only=True)
     intensity_display = serializers.CharField(source='get_intensity_level_display', read_only=True)
     freshness_score = serializers.SerializerMethodField()
+    has_audio_nl = serializers.SerializerMethodField()
+    has_audio_en = serializers.SerializerMethodField()
+    audio_nl_url = serializers.SerializerMethodField()
+    audio_en_url = serializers.SerializerMethodField()
     
     class Meta:
         model = WorkoutScript
@@ -21,6 +25,26 @@ class WorkoutScriptSerializer(serializers.ModelSerializer):
     
     def get_freshness_score(self, obj):
         return obj.get_freshness_score()
+    
+    def get_has_audio_nl(self, obj):
+        return obj.has_audio('nl')
+    
+    def get_has_audio_en(self, obj):
+        return obj.has_audio('en')
+    
+    def get_audio_nl_url(self, obj):
+        if obj.audio_nl:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.audio_nl.url)
+        return None
+    
+    def get_audio_en_url(self, obj):
+        if obj.audio_en:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.audio_en.url)
+        return None
 
 class MotivationalQuoteSerializer(serializers.ModelSerializer):
     training_type_display = serializers.CharField(source='get_training_type_display', read_only=True)

@@ -106,10 +106,10 @@ class ScriptCategoryAdmin(admin.ModelAdmin):
 
 @admin.register(WorkoutScript)
 class WorkoutScriptAdmin(admin.ModelAdmin):
-    list_display = ['title', 'type', 'script_category', 'special_round_indicator', 'goal', 'duration_minutes', 'freshness_indicator', 'is_active']
-    list_filter = ['type', 'script_category__training_type', 'goal', 'is_active']
+    list_display = ['title', 'type', 'script_category', 'special_round_indicator', 'goal', 'duration_minutes', 'audio_availability_indicator', 'freshness_indicator', 'is_active']
+    list_filter = ['type', 'script_category__training_type', 'goal', 'is_active', 'audio_nl', 'audio_en']
     search_fields = ['title', 'content']
-    readonly_fields = ['times_selected', 'last_selected', 'created_at', 'updated_at']
+    readonly_fields = ['times_selected', 'last_selected', 'created_at', 'updated_at', 'audio_duration_nl', 'audio_duration_en']
     
     fieldsets = (
         ('Basic Information', {
@@ -119,6 +119,11 @@ class WorkoutScriptAdmin(admin.ModelAdmin):
         ('Content & Timing', {
             'fields': ('content', 'duration_minutes'),
             'description': 'The actual script text and speaking duration.'
+        }),
+        ('Audio Files (Multi-Language)', {
+            'fields': ('audio_nl', 'audio_duration_nl', 'audio_en', 'audio_duration_en'),
+            'description': 'Upload audio recordings for this script. Duration will be extracted automatically.',
+            'classes': ('collapse',),
         }),
         ('Management', {
             'fields': ('is_active', 'notes'),
@@ -130,6 +135,61 @@ class WorkoutScriptAdmin(admin.ModelAdmin):
             'description': 'Automatically tracked for variety.'
         }),
     )
+    
+    def audio_availability_indicator(self, obj):
+        """Show audio availability status"""
+        has_nl = obj.has_audio('nl')
+        has_en = obj.has_audio('en')
+        
+        if has_nl and has_en:
+            return format_html('<span style="color: #4CAF50; font-weight: bold;">🎵 NL + EN</span>')
+        elif has_nl:
+            return format_html('<span style="color: #2196F3;">🎵 NL only</span>')
+        elif has_en:
+            return format_html('<span style="color: #2196F3;">🎵 EN only</span>')
+        else:
+            return format_html('<span style="color: #9E9E9E;">⚪ No audio</span>')
+    audio_availability_indicator.short_description = 'Audio'
+    
+    def save_model(self, request, obj, form, change):
+        """Extract audio duration on save and validate"""
+        from generator.audio_validator import AudioValidator
+        from django.contrib import messages
+        
+        validator = AudioValidator()
+        
+        # Check if audio files were uploaded
+        if 'audio_nl' in form.changed_data and obj.audio_nl:
+            duration, error = validator.extract_duration(obj.audio_nl)
+            if duration:
+                obj.audio_duration_nl = duration
+                # Validate duration match
+                is_valid, percentage_diff, error_msg = validator.validate_duration_match(
+                    duration, obj.duration_minutes
+                )
+                if not is_valid:
+                    messages.warning(request, f"Dutch audio: {error_msg}")
+                else:
+                    messages.success(request, f"Dutch audio validated: {duration:.1f} min (within tolerance)")
+            elif error:
+                messages.error(request, f"Dutch audio error: {error}")
+        
+        if 'audio_en' in form.changed_data and obj.audio_en:
+            duration, error = validator.extract_duration(obj.audio_en)
+            if duration:
+                obj.audio_duration_en = duration
+                # Validate duration match
+                is_valid, percentage_diff, error_msg = validator.validate_duration_match(
+                    duration, obj.duration_minutes
+                )
+                if not is_valid:
+                    messages.warning(request, f"English audio: {error_msg}")
+                else:
+                    messages.success(request, f"English audio validated: {duration:.1f} min (within tolerance)")
+            elif error:
+                messages.error(request, f"English audio error: {error}")
+        
+        super().save_model(request, obj, form, change)
     
     def special_round_indicator(self, obj):
         """Show if this is a special round script"""
