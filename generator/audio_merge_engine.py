@@ -1,10 +1,6 @@
 """
-Audio Merge Engine Service
-
-Merges audio segments into a single MP3 file
-- Concatenates segments with standardized pauses
-- Applies volume normalization
-- Prevents clipping and silence stacking
+Audio Merge Engine - Merges audio segments into single MP3
+Handles scripts + quotes, applies normalization, prevents clipping
 """
 
 import logging
@@ -17,61 +13,62 @@ logger = logging.getLogger(__name__)
 
 
 class AudioMergeEngine:
-    """
-    Merges audio segments into a single seamless MP3 file
-    """
+    """Merges audio segments into seamless MP3 file"""
     
-    STANDARDIZED_PAUSE_MS = 2000  # 2 seconds in milliseconds
-    TARGET_DBFS = -20.0  # Target loudness in dBFS
-    MAX_DBFS = -1.0  # Maximum to prevent clipping
+    STANDARDIZED_PAUSE_MS = 2000
+    TARGET_DBFS = -20.0
+    MAX_DBFS = -1.0
     
     def merge_playlist(self, audio_playlist):
         """
-        Merge all segments in playlist into single MP3
-        
-        Args:
-            audio_playlist: AudioPlaylist instance
-            
-        Returns:
-            (success, file_path, error_message)
+        Merge all segments (scripts + quotes) into single MP3
+        Returns: (success, file_path, error_message)
         """
         try:
-            segments = audio_playlist.segments.filter(is_available=True).order_by('sequence_order')
+            # Get available segments
+            script_segments = audio_playlist.segments.filter(is_available=True).order_by('sequence_order')
+            quote_segments = audio_playlist.quote_segments.filter(is_available=True).order_by('sequence_order')
             
-            if not segments.exists():
-                return (False, None, "No audio segments available to merge")
+            # Combine and sort by sequence
+            all_segments = []
+            for segment in script_segments:
+                all_segments.append({'type': 'script', 'segment': segment, 'sequence': segment.sequence_order})
+            for segment in quote_segments:
+                all_segments.append({'type': 'quote', 'segment': segment, 'sequence': segment.sequence_order})
             
-            # Load all audio segments
+            all_segments.sort(key=lambda x: x['sequence'])
+            
+            if not all_segments:
+                return (False, None, "No audio segments available")
+            
+            # Load audio files
             audio_files = []
-            for segment in segments:
+            for item in all_segments:
                 try:
-                    audio_file = self._load_audio_file(segment)
+                    audio_file = self._load_audio_file_from_segment(
+                        item['segment'], item['type'], audio_playlist.language
+                    )
                     if audio_file:
-                        audio_files.append((segment, audio_file))
+                        audio_files.append((item['segment'], audio_file))
                 except Exception as e:
-                    logger.error(f"Error loading audio for segment {segment.id}: {e}")
-                    # Continue with other segments
+                    logger.error(f"Error loading {item['type']} segment {item['segment'].id}: {e}")
             
             if not audio_files:
                 return (False, None, "Could not load any audio files")
             
-            # Normalize volume for all segments
+            # Normalize, merge, check clipping
             normalized_files = self.normalize_volume(audio_files)
+            merged_audio = self.insert_pauses_mixed(normalized_files)
             
-            # Insert pauses and concatenate
-            merged_audio = self.insert_pauses(normalized_files, segments)
-            
-            # Check for clipping
             if self.detect_clipping(merged_audio):
-                logger.warning(f"Clipping detected in merged audio for playlist {audio_playlist.id}, reducing volume")
-                # Reduce volume slightly and try again
+                logger.warning(f"Clipping detected in playlist {audio_playlist.id}, reducing volume")
                 merged_audio = merged_audio - 2  # Reduce by 2 dB
             
-            # Generate filename and save
+            # Save
             filename = self.generate_filename(audio_playlist.workout_session, audio_playlist.language)
             file_path = self._save_merged_audio(merged_audio, filename)
             
-            # Update playlist with merged file reference
+            # Update playlist
             from django.core.files import File
             from django.utils import timezone
             with open(file_path, 'rb') as f:
@@ -79,193 +76,117 @@ class AudioMergeEngine:
             audio_playlist.merged_at = timezone.now()
             audio_playlist.save()
             
-            logger.info(f"Successfully merged audio playlist {audio_playlist.id} to {file_path}")
-            
+            logger.info(f"Merged playlist {audio_playlist.id} to {file_path}")
             return (True, file_path, None)
             
         except Exception as e:
-            logger.error(f"Error merging audio playlist {audio_playlist.id}: {e}", exc_info=True)
-            return (False, None, f"Error merging audio: {str(e)}")
+            logger.error(f"Error merging playlist {audio_playlist.id}: {e}", exc_info=True)
+            return (False, None, f"Error: {str(e)}")
     
-    def _load_audio_file(self, segment):
-        """Load audio file from segment"""
+    def _load_audio_file_from_segment(self, segment, segment_type, language):
+        """Load audio file from script or quote segment"""
         try:
-            workout_script = segment.session_script.workout_script
-            language = segment.audio_playlist.language
-            
-            audio_file = workout_script.get_audio_file(language)
+            # Get audio file based on type
+            if segment_type == 'script':
+                audio_file = segment.session_script.workout_script.get_audio_file(language)
+            else:  # quote
+                audio_file = segment.session_quote.motivational_quote.get_audio_file(language)
             
             if not audio_file:
-                logger.error(f"No audio file for script {workout_script.id} in language {language}")
+                logger.error(f"No audio for {segment_type} segment {segment.id} ({language})")
                 return None
             
-            # Get file path - try multiple methods
+            # Get file path
             file_path = None
-            
             try:
-                # Method 1: Try .path attribute (works when file is on local filesystem)
                 if hasattr(audio_file, 'path'):
                     file_path = audio_file.path
-                    logger.debug(f"Got file path from .path: {file_path}")
-            except Exception as e:
-                logger.debug(f"Could not get .path: {e}")
+            except Exception:
+                pass
             
             if not file_path:
-                # Method 2: Build path from MEDIA_ROOT and file name
                 file_path = os.path.join(settings.MEDIA_ROOT, audio_file.name)
-                logger.debug(f"Built file path from MEDIA_ROOT: {file_path}")
             
-            # Verify file exists
             if not os.path.exists(file_path):
-                logger.error(f"Audio file not found at path: {file_path}")
+                logger.error(f"File not found: {file_path}")
                 return None
             
-            logger.info(f"Loading audio from: {file_path}")
-            
-            # Load with pydub
+            # Load audio
             audio = PydubSegment.from_file(file_path)
-            logger.info(f"Successfully loaded audio: {len(audio)}ms")
+            logger.info(f"Loaded {segment_type} audio: {len(audio)}ms from {file_path}")
             return audio
             
         except Exception as e:
-            logger.error(f"Error loading audio file for segment {segment.id}: {e}", exc_info=True)
+            logger.error(f"Error loading {segment_type} segment {segment.id}: {e}", exc_info=True)
             return None
     
     def normalize_volume(self, audio_files):
-        """
-        Apply volume normalization across all segments
-        Uses peak normalization to prevent clipping
-        
-        Args:
-            audio_files: List of (segment, audio) tuples
-            
-        Returns:
-            List of (segment, normalized_audio) tuples
-        """
+        """Apply volume normalization, prevent clipping"""
         normalized = []
         
         for segment, audio in audio_files:
             try:
-                # Apply normalization
                 normalized_audio = normalize(audio, headroom=1.0)
                 
-                # Ensure we don't exceed max dBFS
+                # Ensure max dBFS not exceeded
                 if normalized_audio.dBFS > self.MAX_DBFS:
                     reduction = normalized_audio.dBFS - self.MAX_DBFS
                     normalized_audio = normalized_audio - reduction
                 
                 normalized.append((segment, normalized_audio))
-                
             except Exception as e:
-                logger.error(f"Error normalizing audio for segment {segment.id}: {e}")
-                # Use original audio if normalization fails
-                normalized.append((segment, audio))
+                logger.error(f"Error normalizing segment {segment.id}: {e}")
+                normalized.append((segment, audio))  # Use original
         
         return normalized
     
-    def insert_pauses(self, audio_files, segments):
-        """
-        Insert standardized pauses between segments
-        Prevents silence stacking by detecting existing silence
-        
-        Args:
-            audio_files: List of (segment, audio) tuples
-            segments: QuerySet of AudioSegment instances
-            
-        Returns:
-            Merged AudioSegment (pydub)
-        """
+    def insert_pauses_mixed(self, audio_files):
+        """Insert pauses between segments based on pause_after"""
         if not audio_files:
             return None
         
-        # Start with first audio
         merged = audio_files[0][1]
         
-        # Add remaining segments with pauses
         for i in range(1, len(audio_files)):
             segment, audio = audio_files[i]
+            previous_segment = audio_files[i-1][0]
             
-            # Check if we need to add pause
-            # (last segment should have pause_after = 0)
-            previous_segment = segments[i-1]
-            
+            # Add pause if needed
             if previous_segment.pause_after > 0:
-                # Create silence
                 pause_ms = int(previous_segment.pause_after * 1000)
                 silence = PydubSegment.silent(duration=pause_ms)
-                
-                # Add pause then audio
                 merged = merged + silence + audio
             else:
-                # No pause, just concatenate
                 merged = merged + audio
         
         return merged
     
     def detect_clipping(self, merged_audio):
-        """
-        Analyze merged audio for clipping
-        
-        Args:
-            merged_audio: pydub AudioSegment
-            
-        Returns:
-            True if clipping detected
-        """
+        """Check if audio is clipping"""
         try:
-            # Check if peak level is too close to maximum
             if merged_audio.dBFS > self.MAX_DBFS:
                 return True
             
-            # Check max possible amplitude
             if merged_audio.max_possible_amplitude:
-                max_amplitude = merged_audio.max
-                if max_amplitude >= merged_audio.max_possible_amplitude * 0.99:
+                if merged_audio.max >= merged_audio.max_possible_amplitude * 0.99:
                     return True
             
             return False
-            
         except Exception as e:
             logger.error(f"Error detecting clipping: {e}")
             return False
     
     def generate_filename(self, workout_session, language):
-        """
-        Generate filename: workout_{language}_{session_id}.mp3
-        
-        Args:
-            workout_session: WorkoutSession instance
-            language: 'nl' or 'en'
-            
-        Returns:
-            Filename string
-        """
+        """Generate filename: workout_{language}_{session_id}.mp3"""
         return f"workout_{language}_{workout_session.id}.mp3"
     
     def _save_merged_audio(self, merged_audio, filename):
-        """
-        Save merged audio to file
-        
-        Args:
-            merged_audio: pydub AudioSegment
-            filename: Output filename
-            
-        Returns:
-            Full file path
-        """
-        # Create merged audio directory if it doesn't exist
+        """Save merged audio to file"""
         merged_dir = os.path.join(settings.MEDIA_ROOT, 'merged_audio')
         os.makedirs(merged_dir, exist_ok=True)
         
-        # Full file path
         file_path = os.path.join(merged_dir, filename)
         
-        # Export as MP3
-        merged_audio.export(
-            file_path,
-            format='mp3',
-            bitrate='192k',
-            parameters=['-q:a', '2']  # High quality
-        )
+        merged_audio.export(file_path, format='mp3', bitrate='192k', parameters=['-q:a', '2'])
         
         return file_path

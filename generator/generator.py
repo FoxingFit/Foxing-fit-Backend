@@ -1180,8 +1180,10 @@ class IntelligentWorkoutGenerator(
             sport_additions_applied=self.get_sport_additions_summary()
         )
         
+        # Create SessionScript records
+        session_scripts = []
         for i, script in enumerate(final_scripts):
-            SessionScript.objects.create(
+            session_script = SessionScript.objects.create(
                 workout_session=workout_session,
                 workout_script=script,
                 sequence_order=i + 1,
@@ -1189,6 +1191,31 @@ class IntelligentWorkoutGenerator(
                                  script.is_max_challenge() or 
                                  script.is_vinyasa_transition())
             )
+            session_scripts.append(session_script)
+        
+        # Create SessionQuote records from quote processor
+        if hasattr(self, 'quote_processor'):
+            from .models import SessionQuote
+            quote_placements = self.quote_processor.get_quote_placements()
+            
+            for placement in quote_placements:
+                script_index = placement['script_index']
+                quote = placement['quote']
+                
+                # Get the SessionScript this quote was inserted after
+                if script_index < len(session_scripts):
+                    session_script = session_scripts[script_index]
+                    
+                    # Calculate sequence order (between scripts)
+                    # Quote sequence = script sequence + 0.5 (to place between scripts)
+                    quote_sequence = session_script.sequence_order
+                    
+                    SessionQuote.objects.create(
+                        workout_session=workout_session,
+                        motivational_quote=quote,
+                        inserted_after_script=session_script,
+                        sequence_order=quote_sequence
+                    )
         
         return workout_session
     
@@ -1221,12 +1248,16 @@ class IntelligentWorkoutGenerator(
                 else:
                     script_parts.append(f"\n## {script.script_category.display_name}\n\n")
             
-            processed_content = quote_processor.process_script_content(script, training_type)
+            # Pass script_index to track quote placements
+            processed_content = quote_processor.process_script_content(script, training_type, script_index=i)
             script_parts.append(processed_content)
             script_parts.append("\n\n[pause strong] [pause strong]\n")
         
         closing_text = FoxingFitBranding.get_closing_text(training_type)
         script_parts.append(f"\n{closing_text}")
+        
+        # Store quote processor for later use in create_workout_session_record
+        self.quote_processor = quote_processor
         
         return ''.join(script_parts)
     

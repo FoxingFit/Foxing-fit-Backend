@@ -147,6 +147,46 @@ class SessionScript(models.Model):
         verbose_name_plural = "Session Scripts"
 
 
+class SessionQuote(models.Model):
+    """
+    Motivational quotes inserted between scripts in a workout session
+    
+    Developer Notes:
+    - Tracks which quotes were used and where they were placed
+    - Links to SessionScript to maintain insertion order
+    - Enables audio playlist generation with quote audio
+    """
+    
+    workout_session = models.ForeignKey(
+        WorkoutSession,
+        on_delete=models.CASCADE,
+        related_name='session_quotes',
+        help_text="Which workout session this quote belongs to"
+    )
+    motivational_quote = models.ForeignKey(
+        'scripts.MotivationalQuote',
+        on_delete=models.CASCADE,
+        help_text="The motivational quote that was used"
+    )
+    inserted_after_script = models.ForeignKey(
+        SessionScript,
+        on_delete=models.CASCADE,
+        related_name='quotes_after',
+        help_text="The script this quote was inserted after"
+    )
+    sequence_order = models.IntegerField(
+        help_text="Order in the workout (inserted between scripts)"
+    )
+    
+    class Meta:
+        ordering = ['sequence_order']
+        verbose_name = "Session Quote"
+        verbose_name_plural = "Session Quotes"
+    
+    def __str__(self):
+        return f"Quote after {self.inserted_after_script.workout_script.title}: {self.motivational_quote.quote_text[:30]}..."
+
+
 class AudioPlaylist(models.Model):
     """
     Audio playlist for a workout session
@@ -273,3 +313,58 @@ class AudioSegment(models.Model):
     def __str__(self):
         status = "Available" if self.is_available else "Missing"
         return f"Segment {self.sequence_order}: {self.session_script.workout_script.title} ({status})"
+
+
+class AudioQuoteSegment(models.Model):
+    """
+    Motivational quote audio segments within a playlist
+    
+    Developer Notes:
+    - Links to SessionQuote to maintain quote placement
+    - Tracks audio availability and duration for quotes
+    - Inserted between script segments just like text quotes
+    """
+    
+    audio_playlist = models.ForeignKey(
+        AudioPlaylist,
+        on_delete=models.CASCADE,
+        related_name='quote_segments',
+        help_text="Which audio playlist this quote segment belongs to"
+    )
+    session_quote = models.ForeignKey(
+        SessionQuote,
+        on_delete=models.CASCADE,
+        help_text="The session quote this audio represents"
+    )
+    sequence_order = models.IntegerField(
+        help_text="Order in the playlist (inserted between script segments)"
+    )
+    audio_file = models.FileField(
+        upload_to='merged_audio/',
+        null=True,
+        blank=True,
+        help_text="Reference to the quote audio file"
+    )
+    duration = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Duration of this quote audio in minutes"
+    )
+    is_available = models.BooleanField(
+        default=False,
+        help_text="Whether audio is available for this quote"
+    )
+    pause_after = models.FloatField(
+        default=2.0,
+        help_text="Pause duration after this quote in seconds"
+    )
+    
+    class Meta:
+        ordering = ['sequence_order']
+        verbose_name = "Audio Quote Segment"
+        verbose_name_plural = "Audio Quote Segments"
+    
+    def __str__(self):
+        status = "Available" if self.is_available else "Missing"
+        quote_preview = self.session_quote.motivational_quote.quote_text[:30]
+        return f"Quote Segment {self.sequence_order}: {quote_preview}... ({status})"
