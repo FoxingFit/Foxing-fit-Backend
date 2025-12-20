@@ -156,13 +156,19 @@ class WorkoutScriptAdmin(admin.ModelAdmin):
         from generator.audio_validator import AudioValidator
         from django.contrib import messages
         
+        # Save the file first so it exists on disk
+        super().save_model(request, obj, form, change)
+        
+        # Now extract duration from saved files
         validator = AudioValidator()
+        needs_update = False
         
         # Check if audio files were uploaded
         if 'audio_nl' in form.changed_data and obj.audio_nl:
             duration, error = validator.extract_duration(obj.audio_nl)
             if duration:
                 obj.audio_duration_nl = duration
+                needs_update = True
                 # Validate duration match
                 is_valid, percentage_diff, error_msg = validator.validate_duration_match(
                     duration, obj.duration_minutes
@@ -178,6 +184,7 @@ class WorkoutScriptAdmin(admin.ModelAdmin):
             duration, error = validator.extract_duration(obj.audio_en)
             if duration:
                 obj.audio_duration_en = duration
+                needs_update = True
                 # Validate duration match
                 is_valid, percentage_diff, error_msg = validator.validate_duration_match(
                     duration, obj.duration_minutes
@@ -189,7 +196,9 @@ class WorkoutScriptAdmin(admin.ModelAdmin):
             elif error:
                 messages.error(request, f"English audio error: {error}")
         
-        super().save_model(request, obj, form, change)
+        # Save again if durations were extracted
+        if needs_update:
+            obj.save(update_fields=['audio_duration_nl', 'audio_duration_en'])
     
     def special_round_indicator(self, obj):
         """Show if this is a special round script"""
@@ -518,13 +527,20 @@ class MotivationalQuoteAdmin(admin.ModelAdmin):
     def save_model(self, request, obj, form, change):
         """Auto-extract audio duration on save"""
         from generator.audio_validator import AudioValidator
+        
+        # Save the file first so it exists on disk
+        super().save_model(request, obj, form, change)
+        
+        # Now extract duration from saved files
         validator = AudioValidator()
+        needs_update = False
         
         # Extract duration for Dutch audio if uploaded
         if 'audio_nl' in form.changed_data and obj.audio_nl:
             duration, error = validator.extract_duration(obj.audio_nl)
             if duration and not error:
                 obj.audio_duration_nl = duration
+                needs_update = True
                 self.message_user(request, f'Dutch audio duration: {duration:.2f} minutes', level='SUCCESS')
             elif error:
                 self.message_user(request, f'Could not extract Dutch audio duration: {error}', level='WARNING')
@@ -534,11 +550,14 @@ class MotivationalQuoteAdmin(admin.ModelAdmin):
             duration, error = validator.extract_duration(obj.audio_en)
             if duration and not error:
                 obj.audio_duration_en = duration
+                needs_update = True
                 self.message_user(request, f'English audio duration: {duration:.2f} minutes', level='SUCCESS')
             elif error:
                 self.message_user(request, f'Could not extract English audio duration: {error}', level='WARNING')
         
-        super().save_model(request, obj, form, change)
+        # Save again if durations were extracted
+        if needs_update:
+            obj.save(update_fields=['audio_duration_nl', 'audio_duration_en'])
     
     def get_form(self, request, obj=None, **kwargs):
         """Filter target_category choices based on training_type"""
