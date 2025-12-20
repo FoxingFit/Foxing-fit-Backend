@@ -59,13 +59,32 @@ class AudioValidator:
             (duration_minutes, error_message)
         """
         try:
-            # Handle Django UploadedFile
+            import os
+            
+            # Handle different file input types
+            file_path = None
+            
+            # 1. Django UploadedFile with temporary path (during upload)
             if hasattr(audio_file, 'temporary_file_path'):
-                file_path = audio_file.temporary_file_path()
-            elif hasattr(audio_file, 'path'):
-                file_path = audio_file.path
-            else:
+                try:
+                    file_path = audio_file.temporary_file_path()
+                except Exception:
+                    pass  # Fall through to next method
+            
+            # 2. Django FieldFile with path (after save)
+            if not file_path and hasattr(audio_file, 'path'):
+                try:
+                    # Check if file actually exists at this path
+                    if os.path.exists(audio_file.path):
+                        file_path = audio_file.path
+                except Exception:
+                    pass  # Fall through to next method
+            
+            # 3. String path
+            if not file_path:
                 file_path = str(audio_file)
+                if not os.path.exists(file_path):
+                    return (None, f"File not found at path: {file_path}")
             
             # Use mutagen to extract duration
             audio = MutagenFile(file_path)
@@ -79,8 +98,13 @@ class AudioValidator:
             duration_seconds = audio.info.length
             duration_minutes = duration_seconds / 60.0
             
-            return (round(duration_minutes, 1), None)
+            # Use 3 decimal places for accurate duration (especially for short quotes)
+            # 0.001 minutes = 0.06 seconds precision
+            return (round(duration_minutes, 3), None)
             
+        except FileNotFoundError as e:
+            logger.error(f"File not found: {e}")
+            return (None, f"File not found: {str(e)}")
         except Exception as e:
             logger.error(f"Error extracting audio duration: {e}")
             return (None, f"Error extracting duration: {str(e)}")
