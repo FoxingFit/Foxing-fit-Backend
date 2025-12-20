@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import WorkoutSession, SessionScript, AudioPlaylist, AudioSegment
+from .models import WorkoutSession, SessionScript, SessionQuote, AudioPlaylist, AudioSegment, AudioQuoteSegment
 from scripts.serializers import WorkoutScriptSerializer
 
 class SessionScriptSerializer(serializers.ModelSerializer):
@@ -8,6 +8,20 @@ class SessionScriptSerializer(serializers.ModelSerializer):
     class Meta:
         model = SessionScript
         fields = ['sequence_order', 'workout_script', 'is_sport_addition']
+
+
+class SessionQuoteSerializer(serializers.ModelSerializer):
+    """Serializer for session quotes"""
+    quote_text = serializers.CharField(source='motivational_quote.quote_text', read_only=True)
+    quote_id = serializers.IntegerField(source='motivational_quote.id', read_only=True)
+    inserted_after_script_title = serializers.CharField(
+        source='inserted_after_script.workout_script.title', 
+        read_only=True
+    )
+    
+    class Meta:
+        model = SessionQuote
+        fields = ['sequence_order', 'quote_text', 'quote_id', 'inserted_after_script_title']
 
 
 class AudioSegmentSerializer(serializers.ModelSerializer):
@@ -32,12 +46,36 @@ class AudioSegmentSerializer(serializers.ModelSerializer):
         return None
 
 
+class AudioQuoteSegmentSerializer(serializers.ModelSerializer):
+    """Serializer for audio quote segments"""
+    quote_text = serializers.CharField(source='session_quote.motivational_quote.quote_text', read_only=True)
+    quote_id = serializers.IntegerField(source='session_quote.motivational_quote.id', read_only=True)
+    audio_url = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = AudioQuoteSegment
+        fields = [
+            'id', 'sequence_order', 'quote_text', 'quote_id',
+            'duration', 'is_available', 'pause_after', 'audio_url'
+        ]
+    
+    def get_audio_url(self, obj):
+        """Get URL for audio file if available"""
+        if obj.is_available and obj.audio_file:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.audio_file.url)
+        return None
+
+
 class AudioPlaylistSerializer(serializers.ModelSerializer):
-    """Serializer for audio playlists"""
+    """Serializer for audio playlists with both script and quote segments"""
     language_display = serializers.CharField(source='get_language_display', read_only=True)
     completeness_percentage = serializers.SerializerMethodField()
     is_complete = serializers.SerializerMethodField()
     segments = AudioSegmentSerializer(many=True, read_only=True)
+    quote_segments = AudioQuoteSegmentSerializer(many=True, read_only=True)
+    all_segments = serializers.SerializerMethodField()
     workout_session_id = serializers.IntegerField(source='workout_session.id', read_only=True)
     merged_audio_url = serializers.SerializerMethodField()
     has_merged_audio = serializers.SerializerMethodField()
@@ -47,7 +85,8 @@ class AudioPlaylistSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'workout_session_id', 'language', 'language_display',
             'total_duration', 'segment_count', 'available_segment_count',
-            'completeness_percentage', 'is_complete', 'created_at', 'segments',
+            'completeness_percentage', 'is_complete', 'created_at', 
+            'segments', 'quote_segments', 'all_segments',
             'merged_audio_url', 'has_merged_audio', 'merged_at'
         ]
     
@@ -58,6 +97,30 @@ class AudioPlaylistSerializer(serializers.ModelSerializer):
     def get_is_complete(self, obj):
         """Check if playlist is complete"""
         return obj.is_complete()
+    
+    def get_all_segments(self, obj):
+        """Get all segments (scripts + quotes) sorted by sequence order"""
+        request = self.context.get('request')
+        
+        # Serialize script segments
+        script_segments = AudioSegmentSerializer(
+            obj.segments.all(), 
+            many=True, 
+            context={'request': request}
+        ).data
+        
+        # Serialize quote segments
+        quote_segments = AudioQuoteSegmentSerializer(
+            obj.quote_segments.all(), 
+            many=True, 
+            context={'request': request}
+        ).data
+        
+        # Combine and sort by sequence order
+        all_segments = script_segments + quote_segments
+        all_segments.sort(key=lambda x: x['sequence_order'])
+        
+        return all_segments
     
     def get_merged_audio_url(self, obj):
         """Get URL for merged audio file if available"""
@@ -78,6 +141,7 @@ class WorkoutSessionSerializer(serializers.ModelSerializer):
     time_status = serializers.CharField(source='get_time_status', read_only=True)
     sport_logic_summary = serializers.CharField(source='get_sport_logic_summary', read_only=True)
     session_scripts = SessionScriptSerializer(many=True, read_only=True)
+    session_quotes = SessionQuoteSerializer(many=True, read_only=True)
     audio_playlists = AudioPlaylistSerializer(many=True, read_only=True)
     
     class Meta:

@@ -443,15 +443,19 @@ class WorkoutTemplateAdmin(admin.ModelAdmin):
 
 @admin.register(MotivationalQuote)
 class MotivationalQuoteAdmin(admin.ModelAdmin):
-    list_display = ['training_type', 'quote_preview', 'target_category_display', 'is_exercise_specific', 'times_used', 'is_active']
+    list_display = ['training_type', 'quote_preview', 'target_category_display', 'is_exercise_specific', 'audio_status', 'audio_duration_display', 'times_used', 'is_active']
     list_filter = ['training_type', 'is_exercise_specific', 'target_category__training_type', 'is_active']
     search_fields = ['quote_text']
-    readonly_fields = ['times_used', 'last_used', 'is_exercise_specific']
+    readonly_fields = ['times_used', 'last_used', 'is_exercise_specific', 'audio_duration_nl_seconds', 'audio_duration_en_seconds']
     
     fieldsets = (
         ('Quote Content', {
             'fields': ('training_type', 'quote_text', 'language'),
             'description': 'The motivational quote and what sport it\'s for.'
+        }),
+        ('Audio Files', {
+            'fields': ('audio_nl', 'audio_duration_nl_seconds', 'audio_en', 'audio_duration_en_seconds'),
+            'description': 'Upload audio recordings - duration will be auto-extracted and shown in seconds.'
         }),
         ('Exercise Targeting', {
             'fields': ('target_category',),
@@ -475,6 +479,66 @@ class MotivationalQuoteAdmin(admin.ModelAdmin):
     def target_category_display(self, obj):
         return obj.target_category.display_name if obj.target_category else "General"
     target_category_display.short_description = 'Target Exercise'
+    
+    def audio_status(self, obj):
+        """Show audio availability status"""
+        nl = "🇳🇱" if obj.has_audio('nl') else "❌"
+        en = "🇬🇧" if obj.has_audio('en') else "❌"
+        return f"{nl} {en}"
+    audio_status.short_description = 'Audio'
+    
+    def audio_duration_display(self, obj):
+        """Show audio duration in seconds for list view"""
+        durations = []
+        if obj.audio_duration_nl:
+            seconds = int(obj.audio_duration_nl * 60)
+            durations.append(f"🇳🇱 {seconds}s")
+        if obj.audio_duration_en:
+            seconds = int(obj.audio_duration_en * 60)
+            durations.append(f"🇬🇧 {seconds}s")
+        return " | ".join(durations) if durations else "-"
+    audio_duration_display.short_description = 'Duration'
+    
+    def audio_duration_nl_seconds(self, obj):
+        """Show Dutch audio duration in seconds"""
+        if obj.audio_duration_nl:
+            seconds = obj.audio_duration_nl * 60
+            return f"{seconds:.1f} seconds ({obj.audio_duration_nl:.2f} minutes)"
+        return "No audio uploaded"
+    audio_duration_nl_seconds.short_description = 'Dutch Audio Duration'
+    
+    def audio_duration_en_seconds(self, obj):
+        """Show English audio duration in seconds"""
+        if obj.audio_duration_en:
+            seconds = obj.audio_duration_en * 60
+            return f"{seconds:.1f} seconds ({obj.audio_duration_en:.2f} minutes)"
+        return "No audio uploaded"
+    audio_duration_en_seconds.short_description = 'English Audio Duration'
+    
+    def save_model(self, request, obj, form, change):
+        """Auto-extract audio duration on save"""
+        from generator.audio_validator import AudioValidator
+        validator = AudioValidator()
+        
+        # Extract duration for Dutch audio if uploaded
+        if 'audio_nl' in form.changed_data and obj.audio_nl:
+            duration, error = validator.extract_duration(obj.audio_nl)
+            if duration and not error:
+                obj.audio_duration_nl = duration
+                self.message_user(request, f'Dutch audio duration: {duration:.2f} minutes', level='SUCCESS')
+            elif error:
+                self.message_user(request, f'Could not extract Dutch audio duration: {error}', level='WARNING')
+        
+        # Extract duration for English audio if uploaded
+        if 'audio_en' in form.changed_data and obj.audio_en:
+            duration, error = validator.extract_duration(obj.audio_en)
+            if duration and not error:
+                obj.audio_duration_en = duration
+                self.message_user(request, f'English audio duration: {duration:.2f} minutes', level='SUCCESS')
+            elif error:
+                self.message_user(request, f'Could not extract English audio duration: {error}', level='WARNING')
+        
+        super().save_model(request, obj, form, change)
     
     def get_form(self, request, obj=None, **kwargs):
         """Filter target_category choices based on training_type"""

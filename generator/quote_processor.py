@@ -12,18 +12,21 @@ class QuoteProcessor:
     - Matches exercise-specific quotes to relevant scripts
     - Tracks usage to prevent repetition
     - Respects Johnny's placement rules
+    - Records which quotes were used for audio playlist generation
     """
     
     def __init__(self):
         self.used_quote_ids = set()
+        self.quote_placements = []  # Track (script_index, quote) for SessionQuote creation
     
-    def process_script_content(self, script, training_type):
+    def process_script_content(self, script, training_type, script_index=None):
         """
         Process a single script's content to replace quote placeholders
         
         Args:
             script: WorkoutScript instance
             training_type: Sport type for quote selection
+            script_index: Index of script in workout (for tracking placement)
             
         Returns:
             Processed content with quotes filled in or placeholders removed
@@ -46,11 +49,22 @@ class QuoteProcessor:
                 content = content.replace(placeholder, formatted_quote, 1)
                 quote.mark_used()
                 self.used_quote_ids.add(quote.id)
+                
+                # Track quote placement for SessionQuote creation
+                if script_index is not None:
+                    self.quote_placements.append({
+                        'script_index': script_index,
+                        'quote': quote
+                    })
             else:
                 # Remove placeholder if no suitable quote found
                 content = content.replace(placeholder, '', 1)
         
         return content
+    
+    def get_quote_placements(self):
+        """Get list of quote placements for SessionQuote creation"""
+        return self.quote_placements
     
     def _select_contextual_quote(self, script, training_type):
         """

@@ -428,6 +428,30 @@ class MotivationalQuote(models.Model):
         help_text="Language for this quote"
     )
     
+    # Audio fields for multi-language audio workout generation
+    audio_nl = models.FileField(
+        upload_to='quote_audio/nl/',
+        null=True,
+        blank=True,
+        help_text="Dutch audio recording for this quote"
+    )
+    audio_en = models.FileField(
+        upload_to='quote_audio/en/',
+        null=True,
+        blank=True,
+        help_text="English audio recording for this quote"
+    )
+    audio_duration_nl = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Duration of Dutch audio in minutes"
+    )
+    audio_duration_en = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Duration of English audio in minutes"
+    )
+    
     # USAGE TRACKING - Prevents quote repetition and ensures variety
     times_used = models.IntegerField(
         default=0,
@@ -478,6 +502,31 @@ class MotivationalQuote(models.Model):
         if not self.is_exercise_specific:
             return True  # General quotes match any category
         return self.target_category_id == script_category.id
+    
+    # Audio-related methods (same as WorkoutScript)
+    def has_audio(self, language='nl'):
+        """Check if audio exists for given language"""
+        if language == 'nl':
+            return bool(self.audio_nl)
+        elif language == 'en':
+            return bool(self.audio_en)
+        return False
+    
+    def get_audio_file(self, language='nl'):
+        """Get audio file for given language"""
+        if language == 'nl':
+            return self.audio_nl
+        elif language == 'en':
+            return self.audio_en
+        return None
+    
+    def get_audio_duration(self, language='nl'):
+        """Get audio duration for given language"""
+        if language == 'nl':
+            return self.audio_duration_nl
+        elif language == 'en':
+            return self.audio_duration_en
+        return None
     
     def __str__(self):
         category_info = f" ({self.target_category.display_name})" if self.target_category else " (General)"
