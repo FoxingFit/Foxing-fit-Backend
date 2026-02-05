@@ -106,10 +106,10 @@ class ScriptCategoryAdmin(admin.ModelAdmin):
 
 @admin.register(WorkoutScript)
 class WorkoutScriptAdmin(admin.ModelAdmin):
-    list_display = ['title', 'type', 'script_category', 'special_round_indicator', 'goal', 'duration_minutes', 'freshness_indicator', 'is_active']
-    list_filter = ['type', 'script_category__training_type', 'goal', 'is_active']
+    list_display = ['title', 'type', 'script_category', 'special_round_indicator', 'goal', 'duration_minutes', 'audio_availability_indicator', 'freshness_indicator', 'is_active']
+    list_filter = ['type', 'script_category__training_type', 'goal', 'is_active', 'audio_nl', 'audio_en']
     search_fields = ['title', 'content']
-    readonly_fields = ['times_selected', 'last_selected', 'created_at', 'updated_at']
+    readonly_fields = ['times_selected', 'last_selected', 'created_at', 'updated_at', 'audio_duration_nl', 'audio_duration_en']
     
     fieldsets = (
         ('Basic Information', {
@@ -119,6 +119,11 @@ class WorkoutScriptAdmin(admin.ModelAdmin):
         ('Content & Timing', {
             'fields': ('content', 'duration_minutes'),
             'description': 'The actual script text and speaking duration.'
+        }),
+        ('Audio Files (Multi-Language)', {
+            'fields': ('audio_nl', 'audio_duration_nl', 'audio_en', 'audio_duration_en'),
+            'description': 'Upload audio recordings for this script. Duration will be extracted automatically.',
+            'classes': ('collapse',),
         }),
         ('Management', {
             'fields': ('is_active', 'notes'),
@@ -130,6 +135,70 @@ class WorkoutScriptAdmin(admin.ModelAdmin):
             'description': 'Automatically tracked for variety.'
         }),
     )
+    
+    def audio_availability_indicator(self, obj):
+        """Show audio availability status"""
+        has_nl = obj.has_audio('nl')
+        has_en = obj.has_audio('en')
+        
+        if has_nl and has_en:
+            return format_html('<span style="color: #4CAF50; font-weight: bold;">🎵 NL + EN</span>')
+        elif has_nl:
+            return format_html('<span style="color: #2196F3;">🎵 NL only</span>')
+        elif has_en:
+            return format_html('<span style="color: #2196F3;">🎵 EN only</span>')
+        else:
+            return format_html('<span style="color: #9E9E9E;">⚪ No audio</span>')
+    audio_availability_indicator.short_description = 'Audio'
+    
+    def save_model(self, request, obj, form, change):
+        """Extract audio duration on save and validate"""
+        from generator.audio_validator import AudioValidator
+        from django.contrib import messages
+        
+        # Save the file first so it exists on disk
+        super().save_model(request, obj, form, change)
+        
+        # Now extract duration from saved files
+        validator = AudioValidator()
+        needs_update = False
+        
+        # Check if audio files were uploaded
+        if 'audio_nl' in form.changed_data and obj.audio_nl:
+            duration, error = validator.extract_duration(obj.audio_nl)
+            if duration:
+                obj.audio_duration_nl = duration
+                needs_update = True
+                # Validate duration match
+                is_valid, percentage_diff, error_msg = validator.validate_duration_match(
+                    duration, obj.duration_minutes
+                )
+                if not is_valid:
+                    messages.warning(request, f"Dutch audio: {error_msg}")
+                else:
+                    messages.success(request, f"Dutch audio validated: {duration:.1f} min (within tolerance)")
+            elif error:
+                messages.error(request, f"Dutch audio error: {error}")
+        
+        if 'audio_en' in form.changed_data and obj.audio_en:
+            duration, error = validator.extract_duration(obj.audio_en)
+            if duration:
+                obj.audio_duration_en = duration
+                needs_update = True
+                # Validate duration match
+                is_valid, percentage_diff, error_msg = validator.validate_duration_match(
+                    duration, obj.duration_minutes
+                )
+                if not is_valid:
+                    messages.warning(request, f"English audio: {error_msg}")
+                else:
+                    messages.success(request, f"English audio validated: {duration:.1f} min (within tolerance)")
+            elif error:
+                messages.error(request, f"English audio error: {error}")
+        
+        # Save again if durations were extracted
+        if needs_update:
+            obj.save(update_fields=['audio_duration_nl', 'audio_duration_en'])
     
     def special_round_indicator(self, obj):
         """Show if this is a special round script"""
@@ -383,15 +452,19 @@ class WorkoutTemplateAdmin(admin.ModelAdmin):
 
 @admin.register(MotivationalQuote)
 class MotivationalQuoteAdmin(admin.ModelAdmin):
-    list_display = ['training_type', 'quote_preview', 'target_category_display', 'is_exercise_specific', 'times_used', 'is_active']
+    list_display = ['training_type', 'quote_preview', 'target_category_display', 'is_exercise_specific', 'audio_status', 'audio_duration_display', 'times_used', 'is_active']
     list_filter = ['training_type', 'is_exercise_specific', 'target_category__training_type', 'is_active']
     search_fields = ['quote_text']
-    readonly_fields = ['times_used', 'last_used', 'is_exercise_specific']
+    readonly_fields = ['times_used', 'last_used', 'is_exercise_specific', 'audio_duration_nl_seconds', 'audio_duration_en_seconds']
     
     fieldsets = (
         ('Quote Content', {
             'fields': ('training_type', 'quote_text', 'language'),
             'description': 'The motivational quote and what sport it\'s for.'
+        }),
+        ('Audio Files', {
+            'fields': ('audio_nl', 'audio_duration_nl_seconds', 'audio_en', 'audio_duration_en_seconds'),
+            'description': 'Upload audio recordings - duration will be auto-extracted and shown in seconds.'
         }),
         ('Exercise Targeting', {
             'fields': ('target_category',),
@@ -415,6 +488,76 @@ class MotivationalQuoteAdmin(admin.ModelAdmin):
     def target_category_display(self, obj):
         return obj.target_category.display_name if obj.target_category else "General"
     target_category_display.short_description = 'Target Exercise'
+    
+    def audio_status(self, obj):
+        """Show audio availability status"""
+        nl = "🇳🇱" if obj.has_audio('nl') else "❌"
+        en = "🇬🇧" if obj.has_audio('en') else "❌"
+        return f"{nl} {en}"
+    audio_status.short_description = 'Audio'
+    
+    def audio_duration_display(self, obj):
+        """Show audio duration in seconds for list view"""
+        durations = []
+        if obj.audio_duration_nl:
+            seconds = int(obj.audio_duration_nl * 60)
+            durations.append(f"🇳🇱 {seconds}s")
+        if obj.audio_duration_en:
+            seconds = int(obj.audio_duration_en * 60)
+            durations.append(f"🇬🇧 {seconds}s")
+        return " | ".join(durations) if durations else "-"
+    audio_duration_display.short_description = 'Duration'
+    
+    def audio_duration_nl_seconds(self, obj):
+        """Show Dutch audio duration in seconds"""
+        if obj.audio_duration_nl:
+            seconds = obj.audio_duration_nl * 60
+            return f"{seconds:.1f} seconds ({obj.audio_duration_nl:.2f} minutes)"
+        return "No audio uploaded"
+    audio_duration_nl_seconds.short_description = 'Dutch Audio Duration'
+    
+    def audio_duration_en_seconds(self, obj):
+        """Show English audio duration in seconds"""
+        if obj.audio_duration_en:
+            seconds = obj.audio_duration_en * 60
+            return f"{seconds:.1f} seconds ({obj.audio_duration_en:.2f} minutes)"
+        return "No audio uploaded"
+    audio_duration_en_seconds.short_description = 'English Audio Duration'
+    
+    def save_model(self, request, obj, form, change):
+        """Auto-extract audio duration on save"""
+        from generator.audio_validator import AudioValidator
+        
+        # Save the file first so it exists on disk
+        super().save_model(request, obj, form, change)
+        
+        # Now extract duration from saved files
+        validator = AudioValidator()
+        needs_update = False
+        
+        # Extract duration for Dutch audio if uploaded
+        if 'audio_nl' in form.changed_data and obj.audio_nl:
+            duration, error = validator.extract_duration(obj.audio_nl)
+            if duration and not error:
+                obj.audio_duration_nl = duration
+                needs_update = True
+                self.message_user(request, f'Dutch audio duration: {duration:.2f} minutes', level='SUCCESS')
+            elif error:
+                self.message_user(request, f'Could not extract Dutch audio duration: {error}', level='WARNING')
+        
+        # Extract duration for English audio if uploaded
+        if 'audio_en' in form.changed_data and obj.audio_en:
+            duration, error = validator.extract_duration(obj.audio_en)
+            if duration and not error:
+                obj.audio_duration_en = duration
+                needs_update = True
+                self.message_user(request, f'English audio duration: {duration:.2f} minutes', level='SUCCESS')
+            elif error:
+                self.message_user(request, f'Could not extract English audio duration: {error}', level='WARNING')
+        
+        # Save again if durations were extracted
+        if needs_update:
+            obj.save(update_fields=['audio_duration_nl', 'audio_duration_en'])
     
     def get_form(self, request, obj=None, **kwargs):
         """Filter target_category choices based on training_type"""
