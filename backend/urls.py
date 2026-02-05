@@ -25,7 +25,11 @@ urlpatterns = [
     path('api/generator/', include('generator.urls')),
 ]
 
-# Serve media and static files in development
+# Serve media files (audio files) in all environments
+# Note: In production, consider using a CDN or dedicated media server for better performance
+urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+# Serve static files in development
 if settings.DEBUG:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

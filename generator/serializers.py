@@ -39,10 +39,18 @@ class AudioSegmentSerializer(serializers.ModelSerializer):
     
     def get_audio_url(self, obj):
         """Get URL for audio file if available"""
-        if obj.is_available and obj.audio_file:
+        if not obj.is_available:
+            return None
+        
+        # Get audio file from the related WorkoutScript
+        language = obj.audio_playlist.language
+        workout_script = obj.session_script.workout_script
+        audio_file = workout_script.get_audio_file(language)
+        
+        if audio_file:
             request = self.context.get('request')
             if request:
-                return request.build_absolute_uri(obj.audio_file.url)
+                return request.build_absolute_uri(audio_file.url)
         return None
 
 
@@ -61,10 +69,18 @@ class AudioQuoteSegmentSerializer(serializers.ModelSerializer):
     
     def get_audio_url(self, obj):
         """Get URL for audio file if available"""
-        if obj.is_available and obj.audio_file:
+        if not obj.is_available:
+            return None
+        
+        # Get audio file from the related MotivationalQuote
+        language = obj.audio_playlist.language
+        motivational_quote = obj.session_quote.motivational_quote
+        audio_file = motivational_quote.get_audio_file(language)
+        
+        if audio_file:
             request = self.context.get('request')
             if request:
-                return request.build_absolute_uri(obj.audio_file.url)
+                return request.build_absolute_uri(audio_file.url)
         return None
 
 

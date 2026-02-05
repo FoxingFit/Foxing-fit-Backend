@@ -134,6 +134,11 @@ class Command(BaseCommand):
             help='Actually import the audio files',
         )
         parser.add_argument(
+            '--force',
+            action='store_true',
+            help='Force re-upload even if category already has audio',
+        )
+        parser.add_argument(
             '--mp3-folder',
             type=str,
             default='mp3 scripts',
@@ -150,6 +155,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         analyze_only = options['analyze']
         do_import = options['do_import']
+        force = options['force']
         mp3_folder = options['mp3_folder']
         default_goal = options['goal']
         
@@ -168,6 +174,8 @@ class Command(BaseCommand):
             return
         
         mode = "ANALYSIS MODE (dry run)" if analyze_only else "IMPORT MODE"
+        if force:
+            mode += " (FORCE - will re-upload existing)"
         self.stdout.write(self.style.SUCCESS(f'\n=== {mode} ===\n'))
         
         # Process each sport folder
@@ -204,7 +212,8 @@ class Command(BaseCommand):
                         mp3_file, 
                         training_type, 
                         default_goal,
-                        analyze_only
+                        analyze_only,
+                        force
                     )
                     
                     if result == 'imported':
@@ -224,7 +233,7 @@ class Command(BaseCommand):
         # Print summary
         self.print_summary(analyze_only)
     
-    def process_audio_file(self, mp3_file, training_type, default_goal, analyze_only):
+    def process_audio_file(self, mp3_file, training_type, default_goal, analyze_only, force=False):
         """Process a single audio file"""
         filename = mp3_file.name
         
@@ -266,45 +275,70 @@ class Command(BaseCommand):
             audio_nl__isnull=False
         ).first()
         
-        if existing:
+        if existing and not force:
             self.stdout.write(self.style.WARNING(
-                f'  ⊙ Skipping {filename} - category already has audio'
+                f'  ⊙ Skipping {filename} - category already has audio (use --force to re-upload)'
             ))
             return 'skipped'
         
         # Display what would be imported
+        action = "Re-uploading" if (existing and force) else "Importing"
         self.stdout.write(
-            f'  → {filename}\n'
+            f'  → {action} {filename}\n'
             f'    Title: {title}\n'
             f'    Category: {category.display_name} ({category_name})\n'
             f'    Duration: {duration:.1f} min\n'
             f'    Goal: {default_goal}'
         )
         
+        if existing and force:
+            self.stdout.write(self.style.WARNING(
+                f'    ⚠ Will update existing script ID {existing.id}'
+            ))
+        
         if not analyze_only:
             # Actually import
             with transaction.atomic():
-                script = WorkoutScript.objects.create(
-                    title=title,
-                    type=training_type,
-                    script_category=category,
-                    goal=default_goal,
-                    content=f'[Audio script imported from {filename}]',
-                    duration_minutes=duration,
-                    language='nl',
-                    is_active=True,
-                )
-                
-                # Attach audio file
-                with open(mp3_file, 'rb') as f:
-                    script.audio_nl.save(mp3_file.name, File(f), save=True)
-                
-                script.audio_duration_nl = duration
-                script.save()
-                
-                self.stdout.write(self.style.SUCCESS(
-                    f'    ✓ Imported as script ID {script.id}'
-                ))
+                if existing and force:
+                    # Update existing script
+                    script = existing
+                    script.audio_duration_nl = duration
+                    
+                    # Replace audio file
+                    if script.audio_nl:
+                        script.audio_nl.delete(save=False)
+                    
+                    with open(mp3_file, 'rb') as f:
+                        script.audio_nl.save(mp3_file.name, File(f), save=False)
+                    
+                    script.save()
+                    
+                    self.stdout.write(self.style.SUCCESS(
+                        f'    ✓ Updated script ID {script.id}'
+                    ))
+                else:
+                    # Create new script
+                    script = WorkoutScript.objects.create(
+                        title=title,
+                        type=training_type,
+                        script_category=category,
+                        goal=default_goal,
+                        content=f'[Audio script imported from {filename}]',
+                        duration_minutes=duration,
+                        language='nl',
+                        is_active=True,
+                    )
+                    
+                    # Attach audio file
+                    with open(mp3_file, 'rb') as f:
+                        script.audio_nl.save(mp3_file.name, File(f), save=True)
+                    
+                    script.audio_duration_nl = duration
+                    script.save()
+                    
+                    self.stdout.write(self.style.SUCCESS(
+                        f'    ✓ Imported as script ID {script.id}'
+                    ))
         
         return 'imported'
     
