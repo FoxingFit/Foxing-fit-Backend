@@ -68,16 +68,6 @@ class AudioMergeEngine:
             filename = self.generate_filename(audio_playlist.workout_session, audio_playlist.language)
             file_path = self._save_merged_audio(merged_audio, filename)
             
-            # Delete old merged file if one already exists (re-merge scenario)
-            if audio_playlist.merged_audio_file:
-                try:
-                    old_path = audio_playlist.merged_audio_file.path
-                    if os.path.isfile(old_path):
-                        os.remove(old_path)
-                        logger.info(f"Deleted old merged audio: {old_path}")
-                except Exception as e:
-                    logger.warning(f"Could not delete old merged file for playlist {audio_playlist.id}: {e}")
-
             # Update playlist — point the FileField at the already-saved file
             # (do NOT use .save() here; it would re-upload and create a duplicate with a random suffix)
             from django.utils import timezone
