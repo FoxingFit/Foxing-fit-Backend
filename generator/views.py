@@ -3,6 +3,9 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db.models import Q
 from django.http import FileResponse, Http404
+from django.conf import settings
+from django.utils import timezone
+from datetime import timedelta
 from scripts.models import WorkoutTemplate, ScriptCategory
 from .models import WorkoutSession, AudioPlaylist, AudioSegment
 from .generator import IntelligentWorkoutGenerator  # Updated class name
@@ -13,6 +16,31 @@ import logging
 import os
 
 logger = logging.getLogger(__name__)
+
+
+def _cleanup_expired_merged_files():
+    """
+    Delete merged audio files older than MERGED_AUDIO_TTL_HOURS from disk and clear the DB field.
+    Called automatically before every merge so no cron job is needed.
+    """
+    ttl_hours = getattr(settings, 'MERGED_AUDIO_TTL_HOURS', 2)
+    cutoff = timezone.now() - timedelta(hours=ttl_hours)
+    expired = AudioPlaylist.objects.filter(
+        merged_at__lt=cutoff,
+    ).exclude(merged_audio_file='').exclude(merged_audio_file=None)
+
+    for playlist in expired:
+        try:
+            path = playlist.merged_audio_file.path
+            if os.path.isfile(path):
+                os.remove(path)
+                logger.info(f"Auto-cleanup: deleted expired merged audio {path}")
+            playlist.merged_audio_file.delete(save=False)
+            playlist.merged_at = None
+            playlist.save(update_fields=['merged_audio_file', 'merged_at'])
+        except Exception as e:
+            logger.warning(f"Auto-cleanup error for playlist {playlist.id}: {e}")
+
 
 class WorkoutGeneratorViewSet(viewsets.ViewSet):
     """Smart workout generation with full admin control and sport-specific intelligence"""
@@ -425,6 +453,9 @@ class AudioViewSet(viewsets.ViewSet):
             }, status=status.HTTP_404_NOT_FOUND)
         
         try:
+            # Auto-cleanup: delete expired merged files before creating a new one
+            _cleanup_expired_merged_files()
+
             # Merge audio
             merge_engine = AudioMergeEngine()
             success, file_path, error_message = merge_engine.merge_playlist(audio_playlist)
