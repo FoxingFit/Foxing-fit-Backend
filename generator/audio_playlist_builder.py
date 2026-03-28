@@ -77,14 +77,12 @@ class AudioPlaylistBuilder:
         Create quote segments with filtering:
         - Max 1 per position (if multiple, use first)
         - Skip first/last scripts
-        - Apply sport-specific rules
         """
         available_count = 0
         session_scripts_list = list(session_scripts)
         total_scripts = len(session_scripts_list)
-        training_type = audio_playlist.workout_session.training_type
-        
-        logger.info(f"Creating quote segments for {training_type} (max 1 per position)")
+
+        logger.info(f"Creating quote segments (max 1 per position)")
         logger.info(f"Found {session_quotes.count()} quotes in text")
         
         # Group quotes by script
@@ -105,11 +103,6 @@ class AudioPlaylistBuilder:
                 continue
             if i == total_scripts - 1:
                 logger.info(f"Skipping last: {workout_script.title}")
-                continue
-            
-            # Apply sport rules
-            if not self.should_add_quote_after_script(workout_script, training_type):
-                logger.info(f"Skipping '{workout_script.title}' (sport rule)")
                 continue
             
             # Check for quotes
@@ -149,36 +142,6 @@ class AudioPlaylistBuilder:
         
         logger.info(f"Created {available_count} quote segments (filtered from {session_quotes.count()})")
         return available_count
-    
-    def should_add_quote_after_script(self, workout_script, training_type):
-        """
-        Check sport-specific exclusion rules
-        Returns False if quote should be skipped
-        """
-        category_name = workout_script.script_category.name.lower()
-        
-        # Universal exclusions
-        universal_exclusions = ['cooldown', 'cool-down', 'savasana', 'mindfulness', 'stretch', 'relax', 'final']
-        for exclusion in universal_exclusions:
-            if exclusion in category_name:
-                return False
-        
-        # Sport-specific exclusions
-        if training_type == 'kickboxing':
-            if workout_script.is_surprise_round() or 'surprise' in category_name:
-                return False
-        
-        elif training_type == 'calisthenics':
-            if workout_script.is_max_challenge() or 'max' in category_name or 'challenge' in category_name:
-                return False
-        
-        elif training_type == 'power_yoga':
-            power_yoga_exclusions = ['vinyasa', 'standing', 'seated', 'sitting', 'lying', 'prone', 'supine', 'pose']
-            for exclusion in power_yoga_exclusions:
-                if exclusion in category_name:
-                    return False
-        
-        return True
     
     def create_audio_segments(self, audio_playlist, session_scripts, language):
         """Create audio segments for scripts"""
